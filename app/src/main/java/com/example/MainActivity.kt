@@ -113,15 +113,15 @@ class MainActivity : ComponentActivity() {
                         PdfReaderScreen(
                             uiState = uiState,
                             onBack = { navController.popBackStack() },
+                            onPageScrolled = { readerViewModel.onPdfPageScrolledTo(it) },
                             onGoToPage = { readerViewModel.goToPdfPage(it) },
-                            onNextPage = { readerViewModel.nextPdfPage() },
-                            onPreviousPage = { readerViewModel.previousPdfPage() },
                             onToggleBookmark = { readerViewModel.toggleBookmark() },
                             onToggleFitMode = { readerViewModel.toggleFitMode() },
                             onToggleTextSelectionMode = { readerViewModel.toggleTextSelectionMode() },
                             onToggleSearch = { readerViewModel.togglePdfSearch() },
                             onSearchQueryChanged = { readerViewModel.onPdfSearchQueryChanged(it) },
-                            onSaveImmediately = { readerViewModel.savePositionImmediately() }
+                            onSaveImmediately = { readerViewModel.savePositionImmediately() },
+                            getPdfEngine = { readerViewModel.getPdfEngine() }
                         )
                     }
 
@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
                         WordReaderScreen(
                             uiState = uiState,
                             onBack = { navController.popBackStack() },
-                            onScrolledTo = { readerViewModel.onWordScrolledTo(it) },
+                            onScrolledTo = { readerViewModel.onWordPageScrolledTo(it) },
                             onChangeFontSize = { readerViewModel.changeWordFontSize(it) },
                             onToggleBookmark = { readerViewModel.toggleBookmark() },
                             onSaveImmediately = { readerViewModel.savePositionImmediately() }

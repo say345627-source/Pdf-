@@ -11,6 +11,7 @@ import com.example.data.local.WaraqDatabase
 import com.example.data.model.BookEntity
 import com.example.data.model.BookmarkEntity
 import com.example.data.model.DocElement
+import com.example.data.model.DocPage
 import com.example.widget.WaraqWidgetProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,6 +29,8 @@ data class ReaderUiState(
     val book: BookEntity? = null,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
+    // Page tracking
+    val currentVisiblePage: Int = 1, // 1-indexed for the floating 550/11 badge
     // PDF State
     val pdfCurrentPage: Int = 1, // 1-indexed
     val pdfTotalPages: Int = 1,
@@ -41,8 +44,10 @@ data class ReaderUiState(
     val pdfSearchResults: List<PdfEngine.SearchResult> = emptyList(),
     // Word State
     val wordElements: List<DocElement> = emptyList(),
+    val wordPages: List<DocPage> = emptyList(),
+    val wordTotalPages: Int = 1,
+    val wordCurrentPage: Int = 1,
     val wordFontSizeSp: Float = 17f,
-    val wordCurrentParagraphIndex: Int = 0,
     // Bookmark
     val isBookmarked: Boolean = false,
     val bookmarks: List<BookmarkEntity> = emptyList()
@@ -61,6 +66,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var pdfEngine: PdfEngine? = null
     private var saveJob: Job? = null
     private var currentBookId: Long = -1
+
+    fun getPdfEngine(): PdfEngine? = pdfEngine
+
+    suspend fun renderPdfPageBitmap(pageIndex: Int): Bitmap? {
+        return pdfEngine?.renderPage(pageIndex, 1080)
+    }
+
+    fun getPdfPageRatio(pageIndex: Int): Float {
+        return pdfEngine?.getPageAspectRatio(pageIndex) ?: 1.414f
+    }
 
     fun loadBook(bookId: Long) {
         if (currentBookId == bookId && _uiState.value.book != null) return
@@ -119,12 +134,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     book = book,
                     isLoading = false,
                     pdfCurrentPage = savedPage,
+                    currentVisiblePage = savedPage,
                     pdfTotalPages = total,
                     pdfFitMode = fitMode
                 )
             }
 
-            renderPdfPageInternal(savedPage)
+            loadPageTextInternal(savedPage)
         } catch (e: Exception) {
             e.printStackTrace()
             _uiState.update {
@@ -138,21 +154,25 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun loadWordDocument(book: BookEntity, file: File, fontSizeSp: Float) = withContext(Dispatchers.IO) {
         try {
-            val elements = DocxEngine.parseDocument(file)
-            val total = elements.size.coerceAtLeast(1)
-            val savedIndex = (book.lastReadPage - 1).coerceIn(0, total - 1)
+            val rawElements = DocxEngine.parseDocument(file)
+            val pages = DocxEngine.paginateElements(rawElements, book.title)
+            val total = pages.size.coerceAtLeast(1)
+            val savedPage = book.lastReadPage.coerceIn(1, total)
 
             _uiState.update {
                 it.copy(
                     book = book,
                     isLoading = false,
-                    wordElements = elements,
-                    wordFontSizeSp = fontSizeSp,
-                    wordCurrentParagraphIndex = savedIndex
+                    wordElements = rawElements,
+                    wordPages = pages,
+                    wordTotalPages = total,
+                    wordCurrentPage = savedPage,
+                    currentVisiblePage = savedPage,
+                    wordFontSizeSp = fontSizeSp
                 )
             }
 
-            checkBookmarkState(book.id, savedIndex + 1)
+            checkBookmarkState(book.id, savedPage)
         } catch (e: Exception) {
             e.printStackTrace()
             _uiState.update {
@@ -164,42 +184,81 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun renderPdfPageInternal(page1Based: Int) {
+    fun onPdfPageScrolledTo(page1Based: Int) {
+        val total = _uiState.value.pdfTotalPages
+        val validPage = page1Based.coerceIn(1, total)
+        if (validPage == _uiState.value.pdfCurrentPage) return
+
+        _uiState.update {
+            it.copy(
+                pdfCurrentPage = validPage,
+                currentVisiblePage = validPage
+            )
+        }
+
+        loadPageTextInternal(validPage)
+
+        val book = _uiState.value.book ?: return
+        checkBookmarkState(book.id, validPage)
+        scheduleSaveProgress(
+            bookId = book.id,
+            page = validPage,
+            totalPages = total,
+            snippet = _uiState.value.extractedPageText.take(120).trim()
+        )
+    }
+
+    fun onWordPageScrolledTo(page1Based: Int) {
+        val total = _uiState.value.wordTotalPages
+        val validPage = page1Based.coerceIn(1, total)
+        if (validPage == _uiState.value.wordCurrentPage) return
+
+        _uiState.update {
+            it.copy(
+                wordCurrentPage = validPage,
+                currentVisiblePage = validPage
+            )
+        }
+
+        val book = _uiState.value.book ?: return
+        checkBookmarkState(book.id, validPage)
+
+        val pageItem = _uiState.value.wordPages.getOrNull(validPage - 1)
+        val snippet = pageItem?.elements?.firstOrNull()?.let { elem ->
+            when (elem) {
+                is DocElement.Paragraph -> elem.text.take(120)
+                is DocElement.Heading -> elem.text.take(120)
+                is DocElement.ListItem -> elem.text.take(120)
+                else -> ""
+            }
+        } ?: ""
+
+        scheduleSaveProgress(
+            bookId = book.id,
+            page = validPage,
+            totalPages = total,
+            snippet = snippet
+        )
+    }
+
+    private fun loadPageTextInternal(page1Based: Int) {
         val engine = pdfEngine ?: return
         viewModelScope.launch {
-            _uiState.update { it.copy(isRenderingPage = true) }
-
-            val bitmap = engine.renderPage(page1Based - 1, 1080)
             val text = engine.getPageText(page1Based - 1)
-
-            _uiState.update {
-                it.copy(
-                    pdfCurrentPage = page1Based,
-                    currentBitmap = bitmap,
-                    extractedPageText = text,
-                    isRenderingPage = false
-                )
-            }
-
-            val book = _uiState.value.book
-            if (book != null) {
-                checkBookmarkState(book.id, page1Based)
-                scheduleSaveProgress(
-                    bookId = book.id,
-                    page = page1Based,
-                    totalPages = engine.pageCount,
-                    snippet = text.take(120).trim()
-                )
-            }
+            _uiState.update { it.copy(extractedPageText = text) }
         }
     }
 
     fun goToPdfPage(page: Int) {
         val total = _uiState.value.pdfTotalPages
         val target = page.coerceIn(1, total)
-        if (target != _uiState.value.pdfCurrentPage) {
-            renderPdfPageInternal(target)
+        _uiState.update {
+            it.copy(
+                pdfCurrentPage = target,
+                currentVisiblePage = target
+            )
         }
+        loadPageTextInternal(target)
     }
 
     fun nextPdfPage() {
@@ -250,29 +309,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(wordFontSizeSp = newSize) }
         viewModelScope.launch {
             userPreferencesRepo.setWordFontSize(newSize)
+            // Re-paginate with new font size
+            val book = _uiState.value.book ?: return@launch
+            val raw = _uiState.value.wordElements
+            val rePaginated = DocxEngine.paginateElements(raw, book.title)
+            _uiState.update {
+                it.copy(
+                    wordPages = rePaginated,
+                    wordTotalPages = rePaginated.size.coerceAtLeast(1)
+                )
+            }
         }
-    }
-
-    fun onWordScrolledTo(paragraphIndex: Int) {
-        val elements = _uiState.value.wordElements
-        if (elements.isEmpty()) return
-        val validIndex = paragraphIndex.coerceIn(0, elements.size - 1)
-        _uiState.update { it.copy(wordCurrentParagraphIndex = validIndex) }
-
-        val book = _uiState.value.book ?: return
-        val snippet = when (val elem = elements[validIndex]) {
-            is DocElement.Paragraph -> elem.text.take(120)
-            is DocElement.Heading -> elem.text.take(120)
-            is DocElement.ListItem -> elem.text.take(120)
-            else -> ""
-        }
-
-        scheduleSaveProgress(
-            bookId = book.id,
-            page = validIndex + 1,
-            totalPages = elements.size,
-            snippet = snippet
-        )
     }
 
     private fun scheduleSaveProgress(
@@ -284,7 +331,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
-            delay(350) // Debounce saves during rapid scrolling
+            delay(350) // Debounce saves during continuous scrolling
             val total = totalPages.coerceAtLeast(1)
             val progress = (page.toFloat() / total.toFloat() * 100f).coerceIn(0f, 100f)
             val now = System.currentTimeMillis()
@@ -308,8 +355,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val book = _uiState.value.book ?: return
         viewModelScope.launch {
             val isPdf = book.fileType.equals("PDF", ignoreCase = true)
-            val page = if (isPdf) _uiState.value.pdfCurrentPage else (_uiState.value.wordCurrentParagraphIndex + 1)
-            val total = if (isPdf) _uiState.value.pdfTotalPages else _uiState.value.wordElements.size.coerceAtLeast(1)
+            val page = if (isPdf) _uiState.value.pdfCurrentPage else _uiState.value.wordCurrentPage
+            val total = if (isPdf) _uiState.value.pdfTotalPages else _uiState.value.wordTotalPages
             val progress = (page.toFloat() / total.toFloat() * 100f).coerceIn(0f, 100f)
             val snippet = if (isPdf) _uiState.value.extractedPageText.take(120) else ""
 
@@ -329,7 +376,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleBookmark() {
         val book = _uiState.value.book ?: return
         val isPdf = book.fileType.equals("PDF", ignoreCase = true)
-        val page = if (isPdf) _uiState.value.pdfCurrentPage else (_uiState.value.wordCurrentParagraphIndex + 1)
+        val page = if (isPdf) _uiState.value.pdfCurrentPage else _uiState.value.wordCurrentPage
 
         viewModelScope.launch {
             val isBookmarked = bookmarkDao.isBookmarked(book.id, page)
@@ -340,7 +387,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val snippet = if (isPdf) {
                     _uiState.value.extractedPageText.take(80)
                 } else {
-                    _uiState.value.wordElements.getOrNull(_uiState.value.wordCurrentParagraphIndex)?.let {
+                    val p = _uiState.value.wordPages.getOrNull(page - 1)
+                    p?.elements?.firstOrNull()?.let {
                         when (it) {
                             is DocElement.Paragraph -> it.text.take(80)
                             is DocElement.Heading -> it.text.take(80)
@@ -351,7 +399,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val bookmark = BookmarkEntity(
                     bookId = book.id,
                     pageNumber = page,
-                    title = "إشارة موضع: $page",
+                    title = "إشارة صفحة: $page",
                     snippet = snippet
                 )
                 bookmarkDao.insertBookmark(bookmark)
@@ -361,14 +409,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun checkBookmarkState(bookId: Long, page: Int) {
-        val bookmarked = bookmarkDao.isBookmarked(bookId, page)
-        _uiState.update { it.copy(isBookmarked = bookmarked) }
+    private fun checkBookmarkState(bookId: Long, page: Int) {
+        viewModelScope.launch {
+            val bookmarked = bookmarkDao.isBookmarked(bookId, page)
+            _uiState.update { it.copy(isBookmarked = bookmarked) }
+        }
     }
 
-    private suspend fun loadBookmarks(bookId: Long) {
-        bookmarkDao.getBookmarksForBookFlow(bookId).collect { list ->
-            _uiState.update { it.copy(bookmarks = list) }
+    private fun loadBookmarks(bookId: Long) {
+        viewModelScope.launch {
+            bookmarkDao.getBookmarksForBookFlow(bookId).collect { list ->
+                _uiState.update { it.copy(bookmarks = list) }
+            }
         }
     }
 

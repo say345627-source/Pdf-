@@ -80,6 +80,21 @@ class PdfEngine(val file: File) {
         }
     }
 
+    fun getPageAspectRatio(pageIndex: Int): Float {
+        if (pageIndex !in 0 until pageCount) return 1.414f
+        val r = renderer ?: return 1.414f
+        return try {
+            synchronized(r) {
+                val page = r.openPage(pageIndex)
+                val ratio = page.height.toFloat() / page.width.toFloat().coerceAtLeast(1f)
+                page.close()
+                ratio.coerceIn(0.5f, 3.0f)
+            }
+        } catch (e: Exception) {
+            1.414f
+        }
+    }
+
     /**
      * Extracts text of a specific page (0-based) for selection and copying.
      */

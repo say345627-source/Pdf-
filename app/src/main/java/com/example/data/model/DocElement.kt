@@ -46,3 +46,10 @@ data class TextRun(
     val hexColor: String? = null,
     val fontSizeSp: Float? = null
 )
+
+data class DocPage(
+    val pageNumber: Int,
+    val elements: List<DocElement>,
+    val headerTitle: String = "",
+    val runningChapter: String = ""
+)

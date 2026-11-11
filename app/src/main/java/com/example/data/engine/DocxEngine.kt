@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Xml
 import com.example.data.model.DocElement
+import com.example.data.model.DocPage
 import com.example.data.model.TextRun
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
@@ -418,5 +419,62 @@ object DocxEngine {
 
     private fun isArabic(text: String): Boolean {
         return text.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+    }
+
+    fun paginateElements(elements: List<DocElement>, docTitle: String): List<DocPage> {
+        if (elements.isEmpty()) {
+            return listOf(DocPage(1, listOf(DocElement.Paragraph("المستند فارغ.")), docTitle, docTitle))
+        }
+
+        val pages = mutableListOf<DocPage>()
+        var currentPageElements = mutableListOf<DocElement>()
+        var currentWeight = 0
+        var currentChapter = docTitle
+
+        for (elem in elements) {
+            val elemWeight = when (elem) {
+                is DocElement.Heading -> {
+                    if (elem.level == 1) currentChapter = elem.text
+                    150 + elem.text.length
+                }
+                is DocElement.Paragraph -> 50 + elem.text.length
+                is DocElement.ListItem -> 40 + elem.text.length
+                is DocElement.Table -> 300 + (elem.rows.size * 60)
+                is DocElement.ImageItem -> 400
+                is DocElement.Notice -> 150
+            }
+
+            val isHeading1 = (elem is DocElement.Heading && elem.level == 1 && currentPageElements.isNotEmpty())
+            val wouldExceedPage = (currentWeight + elemWeight > 1050 && currentPageElements.isNotEmpty())
+
+            if (isHeading1 || wouldExceedPage) {
+                pages.add(
+                    DocPage(
+                        pageNumber = pages.size + 1,
+                        elements = currentPageElements.toList(),
+                        headerTitle = docTitle,
+                        runningChapter = currentChapter
+                    )
+                )
+                currentPageElements = mutableListOf()
+                currentWeight = 0
+            }
+
+            currentPageElements.add(elem)
+            currentWeight += elemWeight
+        }
+
+        if (currentPageElements.isNotEmpty()) {
+            pages.add(
+                DocPage(
+                    pageNumber = pages.size + 1,
+                    elements = currentPageElements.toList(),
+                    headerTitle = docTitle,
+                    runningChapter = currentChapter
+                )
+            )
+        }
+
+        return pages
     }
 }
