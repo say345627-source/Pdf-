@@ -46,7 +46,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
+            val libraryUiState by libraryViewModel.uiState.collectAsState()
+
+            MyApplicationTheme(themeId = libraryUiState.currentThemeId) {
                 val navController = rememberNavController()
 
                 // Check for intent actions (e.g. Widget click or external View intent)
@@ -64,9 +66,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize()
                 ) {
                     composable("library") {
-                        val uiState by libraryViewModel.uiState.collectAsState()
                         LibraryScreen(
-                            uiState = uiState,
+                            uiState = libraryUiState,
                             onBookClick = { bookId ->
                                 openBookScreen(bookId) { route ->
                                     navController.navigate(route)
@@ -84,11 +85,17 @@ class MainActivity : ComponentActivity() {
                             onSortChanged = { option ->
                                 libraryViewModel.onSortOptionChanged(option)
                             },
+                            onCategorySelected = { category ->
+                                libraryViewModel.onCategoryTabSelected(category)
+                            },
+                            onBottomNavTabSelected = { tab ->
+                                libraryViewModel.onBottomNavTabSelected(tab)
+                            },
+                            onThemeSelected = { themeId ->
+                                libraryViewModel.selectTheme(themeId)
+                            },
                             onSearchChanged = { query ->
                                 libraryViewModel.onSearchQueryChanged(query)
-                            },
-                            onToggleView = {
-                                libraryViewModel.toggleViewMode()
                             },
                             onSettingsClick = {
                                 navController.navigate("settings")

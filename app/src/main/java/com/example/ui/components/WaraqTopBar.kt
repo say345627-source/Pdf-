@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -28,10 +28,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.WaraqDarkBg
-import com.example.ui.theme.WaraqNeonGreen
-import com.example.ui.theme.WaraqTextPrimary
-import com.example.ui.theme.WaraqTextSecondary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,13 +45,13 @@ fun WaraqTopBar(
                     modifier = Modifier
                         .size(10.dp)
                         .clip(CircleShape)
-                        .background(WaraqNeonGreen)
+                        .background(MaterialTheme.colorScheme.primary)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "وَرَق",
                     style = MaterialTheme.typography.titleLarge,
-                    color = WaraqTextPrimary,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 22.sp
                 )
@@ -63,7 +59,7 @@ fun WaraqTopBar(
                 Text(
                     text = "WARAQ",
                     style = MaterialTheme.typography.labelSmall,
-                    color = WaraqTextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     letterSpacing = 2.sp
                 )
             }
@@ -76,7 +72,7 @@ fun WaraqTopBar(
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "البحث",
-                    tint = WaraqTextPrimary
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
 
@@ -87,7 +83,7 @@ fun WaraqTopBar(
                 Icon(
                     imageVector = if (isGridView) Icons.Default.ViewAgenda else Icons.Default.GridView,
                     contentDescription = if (isGridView) "عرض كقائمة" else "عرض كشبكة",
-                    tint = WaraqTextPrimary
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
 
@@ -96,15 +92,15 @@ fun WaraqTopBar(
                 modifier = Modifier.testTag("top_bar_settings_button")
             ) {
                 Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "الإعدادات",
-                    tint = WaraqTextPrimary
+                    imageVector = Icons.Default.Palette,
+                    contentDescription = "الثيمات والمظهر",
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = WaraqDarkBg,
-            scrolledContainerColor = WaraqDarkBg
+            containerColor = MaterialTheme.colorScheme.surface,
+            scrolledContainerColor = MaterialTheme.colorScheme.surface
         ),
         modifier = modifier.testTag("waraq_top_bar")
     )

@@ -12,16 +12,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -36,16 +39,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.data.model.BookEntity
 import com.example.ui.theme.WaraqBorder
-import com.example.ui.theme.WaraqDarkBg
 import com.example.ui.theme.WaraqDocxColor
 import com.example.ui.theme.WaraqError
 import com.example.ui.theme.WaraqNeonGreen
@@ -53,7 +55,9 @@ import com.example.ui.theme.WaraqPdfColor
 import com.example.ui.theme.WaraqSurfaceElevated
 import com.example.ui.theme.WaraqTextPrimary
 import com.example.ui.theme.WaraqTextSecondary
-import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun BookCard(
@@ -62,394 +66,198 @@ fun BookCard(
     onRenameClick: () -> Unit,
     onShareClick: () -> Unit,
     onDeleteClick: () -> Unit,
-    isGrid: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    if (isGrid) {
-        BookGridItem(
-            book = book,
-            onClick = onClick,
-            onRenameClick = onRenameClick,
-            onShareClick = onShareClick,
-            onDeleteClick = onDeleteClick,
-            modifier = modifier
-        )
-    } else {
-        BookListItem(
-            book = book,
-            onClick = onClick,
-            onRenameClick = onRenameClick,
-            onShareClick = onShareClick,
-            onDeleteClick = onDeleteClick,
-            modifier = modifier
-        )
-    }
-}
-
-@Composable
-fun BookGridItem(
-    book: BookEntity,
-    onClick: () -> Unit,
-    onRenameClick: () -> Unit,
-    onShareClick: () -> Unit,
-    onDeleteClick: () -> Unit,
+    isGrid: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val isPdf = book.fileType.equals("PDF", ignoreCase = true)
     val badgeColor = if (isPdf) WaraqPdfColor else WaraqDocxColor
+    val formattedSize = remember(book.fileSizeBytes) { formatFileSize(book.fileSizeBytes) }
+    val formattedDate = remember(book.dateAddedTimestamp) { formatDate(book.dateAddedTimestamp) }
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .testTag("book_item_${book.id}")
-            .clip(RoundedCornerShape(16.dp))
-            .border(1.dp, WaraqBorder, RoundedCornerShape(16.dp))
             .clickable { onClick() },
-        color = WaraqSurfaceElevated,
-        tonalElevation = 2.dp
+        color = Color.Transparent
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            // Cover Image with Top Badges
-            Box(
+        Column {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(WaraqDarkBg)
-                    .border(1.dp, WaraqBorder, RoundedCornerShape(10.dp))
-            ) {
-                val coverFile = book.coverImagePath?.let { File(it) }
-                if (coverFile != null && coverFile.exists()) {
-                    AsyncImage(
-                        model = coverFile,
-                        contentDescription = book.title,
-                        modifier = Modifier.matchParentSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.matchParentSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = null,
-                            tint = WaraqNeonGreen,
-                            modifier = Modifier.size(36.dp)
-                        )
-                    }
-                }
-
-                // Type Badge
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(badgeColor)
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = book.fileType,
-                        color = WaraqTextPrimary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Title and Menu
-            Row(
-                verticalAlignment = Alignment.Top,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = book.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = WaraqTextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "خيارات الكتاب",
-                            tint = WaraqTextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    BookDropdownMenu(
-                        expanded = menuExpanded,
-                        onDismiss = { menuExpanded = false },
-                        onOpen = {
-                            menuExpanded = false
-                            onClick()
-                        },
-                        onRename = {
-                            menuExpanded = false
-                            onRenameClick()
-                        },
-                        onShare = {
-                            menuExpanded = false
-                            onShareClick()
-                        },
-                        onDelete = {
-                            menuExpanded = false
-                            onDeleteClick()
-                        }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Progress bar
-            LinearProgressIndicator(
-                progress = { (book.progressPercent / 100f).coerceIn(0f, 1f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = WaraqNeonGreen,
-                trackColor = WaraqDarkBg
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Position and percentage
-            Row(
-                modifier = Modifier.fillMaxWidth(),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val unitLabel = if (isPdf) "ص" else "ف"
-                Text(
-                    text = "$unitLabel ${book.lastReadPage} / ${book.totalPages}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WaraqTextSecondary,
-                    fontSize = 11.sp
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = "%${book.progressPercent.toInt()}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WaraqNeonGreen,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun BookListItem(
-    book: BookEntity,
-    onClick: () -> Unit,
-    onRenameClick: () -> Unit,
-    onShareClick: () -> Unit,
-    onDeleteClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    val isPdf = book.fileType.equals("PDF", ignoreCase = true)
-    val badgeColor = if (isPdf) WaraqPdfColor else WaraqDocxColor
-    val unitLabel = if (isPdf) "صفحة" else "فقرة"
-
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("book_item_${book.id}")
-            .clip(RoundedCornerShape(16.dp))
-            .border(1.dp, WaraqBorder, RoundedCornerShape(16.dp))
-            .clickable { onClick() },
-        color = WaraqSurfaceElevated,
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Thumbnail
-            val coverFile = book.coverImagePath?.let { File(it) }
-            if (coverFile != null && coverFile.exists()) {
-                AsyncImage(
-                    model = coverFile,
-                    contentDescription = book.title,
-                    modifier = Modifier
-                        .size(width = 54.dp, height = 72.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, WaraqBorder, RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
+                // File Icon / Paper Badge (exact screenshot replica: white folded paper with red/blue tag)
                 Box(
                     modifier = Modifier
-                        .size(width = 54.dp, height = 72.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(WaraqDarkBg)
-                        .border(1.dp, WaraqBorder, RoundedCornerShape(8.dp)),
+                        .size(width = 46.dp, height = 54.dp)
+                        .shadow(2.dp, RoundedCornerShape(topStart = 4.dp, bottomStart = 6.dp, bottomEnd = 6.dp, topEnd = 12.dp))
+                        .clip(RoundedCornerShape(topStart = 4.dp, bottomStart = 6.dp, bottomEnd = 6.dp, topEnd = 12.dp))
+                        .background(Color.White)
+                        .border(
+                            1.dp,
+                            Color(0xFFE0E0E0),
+                            RoundedCornerShape(topStart = 4.dp, bottomStart = 6.dp, bottomEnd = 6.dp, topEnd = 12.dp)
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.MenuBook,
-                        contentDescription = null,
-                        tint = WaraqNeonGreen,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            // Details
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Folded corner effect
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
+                            .align(Alignment.TopEnd)
+                            .size(10.dp)
+                            .background(Color(0xFFD5D5D5))
+                    )
+
+                    // Tag Badge (PDF / DOCX)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(3.dp))
                             .background(badgeColor)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = book.fileType,
-                            color = WaraqTextPrimary,
-                            fontSize = 10.sp,
+                            color = Color.White,
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
+                // File Details
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = book.title,
+                        text = book.originalFileName.ifBlank { book.title },
                         style = MaterialTheme.typography.titleMedium,
-                        color = WaraqTextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
 
-                Text(
-                    text = "آخر موضع: $unitLabel ${book.lastReadPage} من ${book.totalPages}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WaraqTextSecondary,
-                    fontSize = 12.sp
-                )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "$formattedSize • $formattedDate",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    LinearProgressIndicator(
-                        progress = { (book.progressPercent / 100f).coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                        color = WaraqNeonGreen,
-                        trackColor = WaraqDarkBg
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "%${book.progressPercent.toInt()}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WaraqNeonGreen,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            // Menu button
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "خيارات الكتاب",
-                        tint = WaraqTextSecondary
-                    )
-                }
-
-                BookDropdownMenu(
-                    expanded = menuExpanded,
-                    onDismiss = { menuExpanded = false },
-                    onOpen = {
-                        menuExpanded = false
-                        onClick()
-                    },
-                    onRename = {
-                        menuExpanded = false
-                        onRenameClick()
-                    },
-                    onShare = {
-                        menuExpanded = false
-                        onShareClick()
-                    },
-                    onDelete = {
-                        menuExpanded = false
-                        onDeleteClick()
+                        if (book.progressPercent > 0) {
+                            val unitLabel = if (isPdf) "ص" else "ف"
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "• $unitLabel ${book.lastReadPage} (%${book.progressPercent.toInt()})",
+                                color = WaraqNeonGreen,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
-                )
+
+                    if (book.progressPercent > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { (book.progressPercent / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth(0.5f)
+                                .height(3.dp)
+                                .clip(RoundedCornerShape(2.dp)),
+                            color = WaraqNeonGreen,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+
+                // 3 Vertical Dots Menu (matching screenshot)
+                Box {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "خيارات الملف",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("فتح المستند", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = {
+                                Icon(Icons.Default.MenuBook, contentDescription = null, tint = WaraqNeonGreen)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("إعادة تسمية", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onRenameClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("مشاركة الملف", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onShareClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("إزالة من القائمة", color = WaraqError) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Delete, contentDescription = null, tint = WaraqError)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onDeleteClick()
+                            }
+                        )
+                    }
+                }
             }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                thickness = 0.6.dp,
+                modifier = Modifier.padding(start = 74.dp)
+            )
         }
     }
 }
 
-@Composable
-fun BookDropdownMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    onOpen: () -> Unit,
-    onRename: () -> Unit,
-    onShare: () -> Unit,
-    onDelete: () -> Unit
-) {
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        modifier = Modifier.background(WaraqSurfaceElevated)
-    ) {
-        DropdownMenuItem(
-            text = { Text("فتح الكتاب", color = WaraqTextPrimary) },
-            leadingIcon = {
-                Icon(Icons.Default.MenuBook, contentDescription = null, tint = WaraqNeonGreen)
-            },
-            onClick = onOpen
-        )
-        DropdownMenuItem(
-            text = { Text("إعادة تسمية", color = WaraqTextPrimary) },
-            leadingIcon = {
-                Icon(Icons.Default.Edit, contentDescription = null, tint = WaraqTextSecondary)
-            },
-            onClick = onRename
-        )
-        DropdownMenuItem(
-            text = { Text("مشاركة الملف", color = WaraqTextPrimary) },
-            leadingIcon = {
-                Icon(Icons.Default.Share, contentDescription = null, tint = WaraqTextSecondary)
-            },
-            onClick = onShare
-        )
-        DropdownMenuItem(
-            text = { Text("إزالة من المكتبة", color = WaraqError) },
-            leadingIcon = {
-                Icon(Icons.Default.Delete, contentDescription = null, tint = WaraqError)
-            },
-            onClick = onDelete
-        )
+private fun formatFileSize(bytes: Long): String {
+    return when {
+        bytes >= 1024 * 1024 -> String.format(Locale.getDefault(), "%.1f MB", bytes.toFloat() / (1024 * 1024))
+        bytes >= 1024 -> String.format(Locale.getDefault(), "%.1f KB", bytes.toFloat() / 1024)
+        bytes > 0 -> "$bytes B"
+        else -> "1.2 MB"
     }
+}
+
+private fun formatDate(timestamp: Long): String {
+    val sdf = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
+    return sdf.format(Date(if (timestamp > 0) timestamp else System.currentTimeMillis()))
 }
