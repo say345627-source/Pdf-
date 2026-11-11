@@ -1,0 +1,6 @@
+{
+  "name": "وَرَق",
+  "description": "تطبيق قارئ الكتب والمستندات الذكي لملفات PDF وWord مع ويدجت الشاشة الرئيسية لمتابعة القراءة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

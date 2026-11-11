@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="waraq_dark_bg">#090D0B</color>
+    <color name="waraq_surface_dark">#121A16</color>
+    <color name="waraq_surface_elevated">#18221C</color>
+    <color name="waraq_surface_higher">#202C25</color>
+    <color name="waraq_border">#23332A</color>
+    <color name="waraq_neon_green">#39F58A</color>
+    <color name="waraq_green_container">#133622</color>
+    <color name="waraq_text_primary">#F2F5F3</color>
+    <color name="waraq_text_secondary">#9AA69F</color>
+    <color name="waraq_pdf">#FF5722</color>
+    <color name="waraq_docx">#2979FF</color>
+    <color name="waraq_doc">#00B0FF</color>
+</resources>
