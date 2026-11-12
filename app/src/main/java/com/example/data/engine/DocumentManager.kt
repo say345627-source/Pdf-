@@ -156,6 +156,134 @@ class DocumentManager(private val context: Context) {
     }
 
     /**
+     * Registers a locally generated/extracted PDF file into the offline library database.
+     */
+    suspend fun registerGeneratedPdfInLibrary(
+        sourceFile: File,
+        displayTitle: String
+    ): Result<BookEntity> = withContext(Dispatchers.IO) {
+        try {
+            val uniqueId = UUID.randomUUID().toString().take(8)
+            val safeName = displayTitle
+                .ifBlank { "صفحات_مستخرجة" }
+                .replace("[^a-zA-Z0-9._\\-\\u0600-\\u06FF\\s]".toRegex(), "_")
+                .trim()
+                .replace("\\s+".toRegex(), "_")
+            val targetFile = File(libraryDir, "${uniqueId}_$safeName.pdf")
+            sourceFile.copyTo(targetFile, overwrite = true)
+
+            var totalPages = 1
+            var coverPath: String? = null
+            try {
+                val pdfEngine = PdfEngine(targetFile)
+                totalPages = pdfEngine.pageCount.coerceAtLeast(1)
+                val coverBitmap = pdfEngine.renderPage(0, 400)
+                if (coverBitmap != null) {
+                    coverPath = saveCoverBitmap(coverBitmap, uniqueId)
+                }
+                pdfEngine.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            val cleanTitle = displayTitle.ifBlank { "صفحات مستخرجة" }
+            val now = System.currentTimeMillis()
+            val book = BookEntity(
+                title = cleanTitle,
+                originalFileName = "$cleanTitle.pdf",
+                localFilePath = targetFile.absolutePath,
+                originalUriString = null,
+                fileType = "PDF",
+                fileSizeBytes = targetFile.length(),
+                lastReadTimestamp = now,
+                dateAddedTimestamp = now,
+                lastReadPage = 1,
+                totalPages = totalPages,
+                progressPercent = (1f / totalPages * 100f).coerceIn(0f, 100f),
+                coverImagePath = coverPath
+            )
+            val id = bookDao.insertBook(book)
+            val inserted = book.copy(id = id)
+            WaraqWidgetProvider.updateAllWidgets(context)
+            Result.success(inserted)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Replaces an existing PDF book's underlying file after page management (reorder/rotate/delete)
+     * and updates its Room record and cover thumbnail.
+     */
+    suspend fun replacePdfBookFile(
+        book: BookEntity,
+        updatedTempFile: File
+    ): Result<BookEntity> = withContext(Dispatchers.IO) {
+        try {
+            val destFile = File(book.localFilePath)
+            updatedTempFile.copyTo(destFile, overwrite = true)
+
+            var newTotalPages = 1
+            var newCoverPath = book.coverImagePath
+            val uniqueId = UUID.randomUUID().toString().take(8)
+            try {
+                val pdfEngine = PdfEngine(destFile)
+                newTotalPages = pdfEngine.pageCount.coerceAtLeast(1)
+                val coverBitmap = pdfEngine.renderPage(0, 400)
+                if (coverBitmap != null) {
+                    newCoverPath = saveCoverBitmap(coverBitmap, uniqueId)
+                }
+                pdfEngine.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            val clampedPage = book.lastReadPage.coerceIn(1, newTotalPages)
+            val newProgress = (clampedPage.toFloat() / newTotalPages.toFloat() * 100f).coerceIn(0f, 100f)
+            val updatedBook = book.copy(
+                totalPages = newTotalPages,
+                lastReadPage = clampedPage,
+                progressPercent = newProgress,
+                fileSizeBytes = destFile.length(),
+                coverImagePath = newCoverPath,
+                lastReadTimestamp = System.currentTimeMillis()
+            )
+            bookDao.updateBook(updatedBook)
+            WaraqWidgetProvider.updateAllWidgets(context)
+            Result.success(updatedBook)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    suspend fun copyFileToUri(sourceFile: File, destUri: Uri): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.openOutputStream(destUri)?.use { output ->
+                sourceFile.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+            } ?: return@withContext Result.failure(Exception("تعذر الكتابة إلى المسار المحدد"))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    fun createTempExportFile(baseName: String): File {
+        val exportDir = File(context.cacheDir, "exports")
+        if (!exportDir.exists()) exportDir.mkdirs()
+        val safeName = baseName
+            .ifBlank { "waraq_extracted" }
+            .replace("[^a-zA-Z0-9._\\-\\u0600-\\u06FF\\s]".toRegex(), "_")
+            .trim()
+            .replace("\\s+".toRegex(), "_")
+        return File(exportDir, "${safeName}_${System.currentTimeMillis()}.pdf")
+    }
+
+    /**
      * Saves rendered cover image to internal cache directory.
      */
     private fun saveCoverBitmap(bitmap: Bitmap, uniqueId: String): String {

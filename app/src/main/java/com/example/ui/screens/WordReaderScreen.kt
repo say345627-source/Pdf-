@@ -16,7 +16,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,8 +26,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -37,6 +38,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
@@ -46,8 +48,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FormatAlignJustify
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
@@ -56,13 +58,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -72,6 +73,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.example.ui.components.smartZoomPanGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -92,8 +95,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -129,6 +134,7 @@ fun WordReaderScreen(
     onScrolledTo: (Int) -> Unit,
     onChangeFontSize: (Float) -> Unit,
     onToggleBookmark: () -> Unit,
+    onManagePagesClick: () -> Unit,
     onSaveImmediately: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -143,6 +149,8 @@ fun WordReaderScreen(
     var jumpPageInput by remember { mutableStateOf("") }
     var isSepiaPageMode by remember { mutableStateOf(false) }
     var isDarkPageMode by remember { mutableStateOf(false) }
+    var showTextSelectionSheet by remember { mutableStateOf(false) }
+    var hasRestoredInitialPage by remember(uiState.book?.id) { mutableStateOf(false) }
 
     // Zoom and pan state
     var scale by remember { mutableFloatStateOf(1f) }
@@ -160,9 +168,10 @@ fun WordReaderScreen(
         }
     }
 
-    // Restore saved page position on initial load
-    LaunchedEffect(uiState.wordPages.size) {
-        if (uiState.wordPages.isNotEmpty()) {
+    // Restore saved page position once on initial load
+    LaunchedEffect(uiState.isLoading, uiState.book?.id, uiState.wordPages.size) {
+        if (!uiState.isLoading && uiState.book != null && !hasRestoredInitialPage && uiState.wordPages.isNotEmpty()) {
+            hasRestoredInitialPage = true
             val initialPageIndex = (uiState.wordCurrentPage - 1).coerceIn(0, uiState.wordPages.size - 1)
             if (initialPageIndex > 0) {
                 listState.scrollToItem(initialPageIndex)
@@ -212,25 +221,29 @@ fun WordReaderScreen(
                 }
             }
         } else {
-            // Multi-Page Continuous Flow Area
+            // Multi-Page Continuous Flow Area (no SelectionContainer wrapping LazyColumn!)
+            var containerSize by remember { mutableStateOf(IntSize.Zero) }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
+                    .onSizeChanged { containerSize = it }
+                    .smartZoomPanGestures(
+                        currentScale = { scale },
+                        onTransform = { zoom, pan ->
                             scale = (scale * zoom).coerceIn(1f, 3.5f)
-                            if (scale == 1f) {
+                            if (scale <= 1.02f) {
+                                scale = 1f
                                 offset = Offset.Zero
                             } else {
-                                val maxOffsetX = (size.width * (scale - 1)) / 2f
-                                val maxOffsetY = (size.height * (scale - 1)) / 2f
+                                val maxOffsetX = (containerSize.width * (scale - 1)) / 2f
+                                val maxOffsetY = (containerSize.height * (scale - 1)) / 2f
                                 offset = Offset(
                                     x = (offset.x + pan.x).coerceIn(-maxOffsetX, maxOffsetX),
                                     y = (offset.y + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
                                 )
                             }
                         }
-                    }
+                    )
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onDoubleTap = {
@@ -243,40 +256,37 @@ fun WordReaderScreen(
                         )
                     }
             ) {
-                // SelectionContainer enables long-press selection on the page!
-                SelectionContainer {
-                    LazyColumn(
-                        state = listState,
-                        contentPadding = PaddingValues(
-                            top = 64.dp,
-                            bottom = 80.dp,
-                            start = 12.dp,
-                            end = 12.dp
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(16.dp), // Distinct page gap like screenshot
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = offset.x
-                                translationY = offset.y
-                            }
-                            .testTag("word_pages_column")
-                    ) {
-                        itemsIndexed(
-                            items = uiState.wordPages,
-                            key = { _, page -> page.pageNumber }
-                        ) { _, page ->
-                            WordPageCard(
-                                page = page,
-                                totalPages = uiState.wordTotalPages,
-                                baseFontSize = uiState.wordFontSizeSp,
-                                searchQuery = searchQuery,
-                                isSepia = isSepiaPageMode,
-                                isDark = isDarkPageMode
-                            )
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(
+                        top = 96.dp,
+                        bottom = 100.dp,
+                        start = 12.dp,
+                        end = 12.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(16.dp), // Distinct page gap like screenshot
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
                         }
+                        .testTag("word_pages_column")
+                ) {
+                    itemsIndexed(
+                        items = uiState.wordPages,
+                        key = { _, page -> page.pageNumber }
+                    ) { _, page ->
+                        WordPageCard(
+                            page = page,
+                            totalPages = uiState.wordTotalPages,
+                            baseFontSize = uiState.wordFontSizeSp,
+                            searchQuery = searchQuery,
+                            isSepia = isSepiaPageMode,
+                            isDark = isDarkPageMode
+                        )
                     }
                 }
             }
@@ -288,6 +298,7 @@ fun WordReaderScreen(
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(top = 70.dp, end = 16.dp)
             ) {
                 Surface(
@@ -362,6 +373,17 @@ fun WordReaderScreen(
                                 }
                             },
                             actions = {
+                                // Page Manager & Extract
+                                IconButton(
+                                    onClick = {
+                                        onSaveImmediately()
+                                        onManagePagesClick()
+                                    },
+                                    modifier = Modifier.testTag("word_manage_pages_top_button")
+                                ) {
+                                    Icon(Icons.Default.GridView, contentDescription = "إدارة واستخراج الصفحات", tint = WaraqNeonGreen)
+                                }
+
                                 // Search
                                 IconButton(onClick = { isSearchActive = !isSearchActive }) {
                                     Icon(Icons.Default.Search, contentDescription = "بحث", tint = WaraqTextPrimary)
@@ -376,13 +398,9 @@ fun WordReaderScreen(
                                     )
                                 }
 
-                                // Share
-                                IconButton(
-                                    onClick = {
-                                        shareDocumentText(context, uiState.book?.title ?: "", "")
-                                    }
-                                ) {
-                                    Icon(Icons.Default.Share, contentDescription = "مشاركة", tint = WaraqTextPrimary)
+                                // Select & Copy Current Page
+                                IconButton(onClick = { showTextSelectionSheet = true }) {
+                                    Icon(Icons.Default.SelectAll, contentDescription = "تحديد ونسخ", tint = WaraqTextPrimary)
                                 }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = WaraqDarkBg.copy(alpha = 0.95f))
@@ -424,7 +442,7 @@ fun WordReaderScreen(
                 }
             }
 
-            // Bottom Tools Bar (Matching screenshot tools)
+            // Bottom Tools Bar (with navigationBarsPadding and Page Manager)
             AnimatedVisibility(
                 visible = showControls,
                 enter = slideInVertically { it } + fadeIn(),
@@ -440,11 +458,23 @@ fun WordReaderScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .navigationBarsPadding()
                             .padding(horizontal = 8.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. Font Size Control
+                        // 1. Page Manager & Extract
+                        BottomToolItem(
+                            icon = Icons.Default.GridView,
+                            label = "إدارة الصفحات",
+                            tint = WaraqNeonGreen,
+                            onClick = {
+                                onSaveImmediately()
+                                onManagePagesClick()
+                            }
+                        )
+
+                        // 2. Font Size Control
                         BottomToolItem(
                             icon = Icons.Default.FormatSize,
                             label = "تكبير A+",
@@ -457,31 +487,23 @@ fun WordReaderScreen(
                             onClick = { onChangeFontSize(-1.5f) }
                         )
 
-                        // 2. Jump to page
+                        // 3. Jump to page
                         BottomToolItem(
                             icon = Icons.Default.SwapVert,
-                            label = "انتقال سريع",
+                            label = "انتقال",
                             onClick = {
                                 jumpPageInput = uiState.wordCurrentPage.toString()
                                 showJumpDialog = true
                             }
                         )
 
-                        // 3. Bookmark
-                        BottomToolItem(
-                            icon = if (uiState.isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                            label = "إشارة",
-                            tint = if (uiState.isBookmarked) WaraqNeonGreen else WaraqTextSecondary,
-                            onClick = onToggleBookmark
-                        )
-
                         // 4. Page Theme (Sepia / White / Dark)
                         BottomToolItem(
                             icon = Icons.Default.FormatAlignJustify,
                             label = when {
-                                isSepiaPageMode -> "وضع داكن"
-                                isDarkPageMode -> "ورق أبيض"
-                                else -> "ورق دافئ"
+                                isSepiaPageMode -> "داكن"
+                                isDarkPageMode -> "أبيض"
+                                else -> "دافئ"
                             },
                             onClick = {
                                 if (!isSepiaPageMode && !isDarkPageMode) {
@@ -495,6 +517,108 @@ fun WordReaderScreen(
                             }
                         )
                     }
+                }
+            }
+        }
+
+        // Select & Copy Modal Sheet for Word Page
+        if (showTextSelectionSheet) {
+            val currentPageObj = uiState.wordPages.getOrNull((uiState.wordCurrentPage - 1).coerceAtLeast(0))
+            val pageText = remember(currentPageObj) {
+                currentPageObj?.elements?.joinToString("\n\n") { elem ->
+                    when (elem) {
+                        is DocElement.Heading -> elem.text
+                        is DocElement.Paragraph -> elem.text
+                        is DocElement.ListItem -> "• ${elem.text}"
+                        is DocElement.Table -> elem.rows.joinToString("\n") { it.joinToString(" | ") }
+                        is DocElement.Notice -> elem.message
+                        is DocElement.ImageItem -> elem.caption
+                    }
+                } ?: ""
+            }
+            val sheetState = rememberModalBottomSheetState()
+            ModalBottomSheet(
+                onDismissRequest = { showTextSelectionSheet = false },
+                sheetState = sheetState,
+                containerColor = WaraqSurfaceElevated,
+                dragHandle = null
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(20.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "نص الصفحة ${uiState.wordCurrentPage} (تحديد ونسخ)",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = WaraqTextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { showTextSelectionSheet = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = WaraqTextSecondary)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Word Page Text", pageText))
+                                Toast.makeText(context, "تم نسخ نص الصفحة إلى الحافظة", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = WaraqNeonGreen, contentColor = WaraqDarkBg),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("نسخ الصفحة", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = { shareDocumentText(context, uiState.book?.title ?: "", pageText) },
+                            colors = ButtonDefaults.buttonColors(containerColor = WaraqSurfaceDark, contentColor = WaraqTextPrimary),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, WaraqBorder),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("مشاركة", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(WaraqDarkBg)
+                            .border(1.dp, WaraqBorder, RoundedCornerShape(12.dp))
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = pageText.ifBlank { "لا يوجد نص في هذه الصفحة" },
+                                color = WaraqTextPrimary,
+                                style = MaterialTheme.typography.bodyLarge,
+                                lineHeight = 28.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }

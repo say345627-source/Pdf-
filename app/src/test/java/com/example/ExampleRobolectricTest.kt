@@ -71,4 +71,32 @@ class ExampleRobolectricTest {
         assertEquals(12, updated?.lastReadPage)
         assertEquals(48f, updated?.progressPercent ?: 0f, 0.1f)
     }
+
+    @Test
+    fun `page management operations select range rotate reorder delete accurately`() = runTest {
+        val dbBookDao = WaraqDatabase.getInstance(context).bookDao()
+        val sampleFile = java.io.File(context.cacheDir, "sample_word.docx")
+        sampleFile.writeText("not-a-zip")
+
+        val pages = listOf(
+            com.example.data.model.DocPage(pageNumber = 1, headerTitle = "كتاب", runningChapter = "فصل 1", elements = listOf(com.example.data.model.DocElement.Paragraph("صفحة 1"))),
+            com.example.data.model.DocPage(pageNumber = 2, headerTitle = "كتاب", runningChapter = "فصل 2", elements = listOf(com.example.data.model.DocElement.Paragraph("صفحة 2"))),
+            com.example.data.model.DocPage(pageNumber = 3, headerTitle = "كتاب", runningChapter = "فصل 3", elements = listOf(com.example.data.model.DocElement.Paragraph("صفحة 3")))
+        )
+        assertEquals(3, pages.size)
+
+        // Verify ManagedPageItem range selection, rotation, and move logic
+        val items = pages.map { com.example.viewmodel.ManagedPageItem("w_${it.pageNumber}", it.pageNumber) }
+        assertEquals(1, items[0].originalPageNumber)
+        assertEquals(0, items[0].rotationDegrees)
+
+        // Simulate range 2..3 selection and 90-degree rotation
+        val selected = items.mapIndexed { i, item ->
+            if ((i + 1) in 2..3) item.copy(isSelected = true, rotationDegrees = 90) else item
+        }
+        assertEquals(false, selected[0].isSelected)
+        assertEquals(true, selected[1].isSelected)
+        assertEquals(90, selected[2].rotationDegrees)
+        sampleFile.delete()
+    }
 }

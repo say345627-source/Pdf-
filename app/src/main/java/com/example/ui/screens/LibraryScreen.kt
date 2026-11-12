@@ -120,6 +120,7 @@ fun LibraryScreen(
     onThemeSelected: (String) -> Unit,
     onSearchChanged: (String) -> Unit,
     onSettingsClick: () -> Unit,
+    onManagePagesClick: (Long) -> Unit = {},
     onDismissNotification: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -360,6 +361,7 @@ fun LibraryScreen(
                     uiState = uiState,
                     innerPadding = innerPadding,
                     onBookClick = onBookClick,
+                    onManagePagesClick = onManagePagesClick,
                     onRenameClick = { book ->
                         bookToRename = book
                         renameInputText = book.title
@@ -388,6 +390,7 @@ fun LibraryScreen(
                     recentBooks = uiState.recentBooks,
                     innerPadding = innerPadding,
                     onBookClick = onBookClick,
+                    onManagePagesClick = onManagePagesClick,
                     onRenameClick = { book ->
                         bookToRename = book
                         renameInputText = book.title
@@ -553,6 +556,7 @@ fun AllFilesContent(
     uiState: LibraryUiState,
     innerPadding: PaddingValues,
     onBookClick: (Long) -> Unit,
+    onManagePagesClick: (Long) -> Unit,
     onRenameClick: (BookEntity) -> Unit,
     onShareClick: (BookEntity) -> Unit,
     onDeleteClick: (BookEntity) -> Unit,
@@ -590,6 +594,7 @@ fun AllFilesContent(
                     book = book,
                     isGrid = false,
                     onClick = { onBookClick(book.id) },
+                    onManagePagesClick = { onManagePagesClick(book.id) },
                     onRenameClick = { onRenameClick(book) },
                     onShareClick = { onShareClick(book) },
                     onDeleteClick = { onDeleteClick(book) }
@@ -676,6 +681,7 @@ fun RecentsContent(
     recentBooks: List<BookEntity>,
     innerPadding: PaddingValues,
     onBookClick: (Long) -> Unit,
+    onManagePagesClick: (Long) -> Unit,
     onRenameClick: (BookEntity) -> Unit,
     onShareClick: (BookEntity) -> Unit,
     onDeleteClick: (BookEntity) -> Unit
@@ -743,6 +749,7 @@ fun RecentsContent(
                     book = book,
                     isGrid = false,
                     onClick = { onBookClick(book.id) },
+                    onManagePagesClick = { onManagePagesClick(book.id) },
                     onRenameClick = { onRenameClick(book) },
                     onShareClick = { onShareClick(book) },
                     onDeleteClick = { onDeleteClick(book) }

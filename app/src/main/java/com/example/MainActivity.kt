@@ -27,11 +27,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.data.local.WaraqDatabase
 import com.example.ui.screens.LibraryScreen
+import com.example.ui.screens.PageManagerScreen
 import com.example.ui.screens.PdfReaderScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.WordReaderScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.LibraryViewModel
+import com.example.viewmodel.PageManagerViewModel
 import com.example.viewmodel.ReaderViewModel
 import com.example.widget.WaraqWidgetProvider
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +102,9 @@ class MainActivity : ComponentActivity() {
                             onSettingsClick = {
                                 navController.navigate("settings")
                             },
+                            onManagePagesClick = { bookId ->
+                                navController.navigate("page_manager/$bookId")
+                            },
                             onDismissNotification = {
                                 libraryViewModel.dismissNotification()
                             }
@@ -112,8 +117,18 @@ class MainActivity : ComponentActivity() {
                     ) { backStackEntry ->
                         val bookId = backStackEntry.arguments?.getLong("bookId") ?: -1L
                         val readerViewModel: ReaderViewModel = viewModel()
+                        val bookModified by backStackEntry.savedStateHandle
+                            .getStateFlow("book_modified", false)
+                            .collectAsState()
+
                         LaunchedEffect(bookId) {
                             readerViewModel.loadBook(bookId)
+                        }
+                        LaunchedEffect(bookModified) {
+                            if (bookModified) {
+                                backStackEntry.savedStateHandle["book_modified"] = false
+                                readerViewModel.reloadBook(bookId)
+                            }
                         }
                         val uiState by readerViewModel.uiState.collectAsState()
 
@@ -127,6 +142,9 @@ class MainActivity : ComponentActivity() {
                             onToggleTextSelectionMode = { readerViewModel.toggleTextSelectionMode() },
                             onToggleSearch = { readerViewModel.togglePdfSearch() },
                             onSearchQueryChanged = { readerViewModel.onPdfSearchQueryChanged(it) },
+                            onManagePagesClick = {
+                                navController.navigate("page_manager/$bookId")
+                            },
                             onSaveImmediately = { readerViewModel.savePositionImmediately() },
                             getPdfEngine = { readerViewModel.getPdfEngine() }
                         )
@@ -149,7 +167,61 @@ class MainActivity : ComponentActivity() {
                             onScrolledTo = { readerViewModel.onWordPageScrolledTo(it) },
                             onChangeFontSize = { readerViewModel.changeWordFontSize(it) },
                             onToggleBookmark = { readerViewModel.toggleBookmark() },
+                            onManagePagesClick = {
+                                navController.navigate("page_manager/$bookId")
+                            },
                             onSaveImmediately = { readerViewModel.savePositionImmediately() }
+                        )
+                    }
+
+                    composable(
+                        route = "page_manager/{bookId}",
+                        arguments = listOf(navArgument("bookId") { type = NavType.LongType })
+                    ) { backStackEntry ->
+                        val bookId = backStackEntry.arguments?.getLong("bookId") ?: -1L
+                        val pageManagerViewModel: PageManagerViewModel = viewModel()
+                        LaunchedEffect(bookId) {
+                            pageManagerViewModel.loadBook(bookId)
+                        }
+                        val pmState by pageManagerViewModel.uiState.collectAsState()
+
+                        PageManagerScreen(
+                            uiState = pmState,
+                            getPdfEngine = { pageManagerViewModel.getPdfEngine() },
+                            onBack = { didModify ->
+                                if (didModify) {
+                                    navController.previousBackStackEntry?.savedStateHandle?.set("book_modified", true)
+                                }
+                                navController.popBackStack()
+                            },
+                            onToggleSelect = { pageManagerViewModel.toggleSelect(it) },
+                            onSelectAll = { pageManagerViewModel.selectAll() },
+                            onClearSelection = { pageManagerViewModel.clearSelection() },
+                            onSelectRange = { from, to -> pageManagerViewModel.selectRange(from, to) },
+                            onRotatePage = { pageManagerViewModel.rotatePage(it) },
+                            onRotateSelected = { pageManagerViewModel.rotateSelectedPages() },
+                            onMoveEarlier = { pageManagerViewModel.movePageEarlier(it) },
+                            onMoveLater = { pageManagerViewModel.movePageLater(it) },
+                            onDeleteSelected = { pageManagerViewModel.deleteSelectedPages() },
+                            onResetChanges = { pageManagerViewModel.resetChanges() },
+                            onSaveChangesToBook = { onSaved ->
+                                pageManagerViewModel.saveChangesToCurrentPdf(onSaved)
+                            },
+                            onExtractToLibrary = { title, useAll, onCreated ->
+                                pageManagerViewModel.extractPagesToLibrary(title, useAll, onCreated)
+                            },
+                            onPrepareExportFile = { title, onReady ->
+                                pageManagerViewModel.exportSelectedPagesToFile(title, onReady)
+                            },
+                            onCopyFileToUri = { file, uri ->
+                                pageManagerViewModel.copyExportedFileToUri(file, uri)
+                            },
+                            onOpenExtractedBook = { newBookId ->
+                                navController.navigate("pdf_reader/$newBookId") {
+                                    popUpTo("page_manager/$bookId") { inclusive = true }
+                                }
+                            },
+                            onDismissNotification = { pageManagerViewModel.dismissNotification() }
                         )
                     }
 

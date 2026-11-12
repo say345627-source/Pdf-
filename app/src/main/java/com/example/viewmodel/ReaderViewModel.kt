@@ -74,7 +74,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getPdfPageRatio(pageIndex: Int): Float {
-        return pdfEngine?.getPageAspectRatio(pageIndex) ?: 1.414f
+        return pdfEngine?.getCachedAspectRatio(pageIndex) ?: 1.414f
+    }
+
+    fun reloadBook(bookId: Long) {
+        currentBookId = -1L
+        loadBook(bookId)
     }
 
     fun loadBook(bookId: Long) {
@@ -128,6 +133,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val total = engine.pageCount.coerceAtLeast(1)
             // Restore last saved page (1-indexed) safely
             val savedPage = book.lastReadPage.coerceIn(1, total)
+
+            // Preload initial aspect ratios around saved page cleanly on IO
+            engine.preloadAspectRatios((savedPage - 3).coerceAtLeast(0), 25)
 
             _uiState.update {
                 it.copy(
@@ -197,6 +205,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         loadPageTextInternal(validPage)
+
+        // Prefetch upcoming pages silently on IO so scrolling never stalls
+        val engine = pdfEngine
+        if (engine != null) {
+            viewModelScope.launch {
+                engine.preloadAspectRatios(validPage, 10)
+                if (validPage < total) {
+                    engine.renderPage(validPage, 1080)
+                }
+            }
+        }
 
         val book = _uiState.value.book ?: return
         checkBookmarkState(book.id, validPage)

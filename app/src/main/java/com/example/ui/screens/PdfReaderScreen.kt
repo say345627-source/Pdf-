@@ -17,10 +17,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,13 +27,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -49,12 +48,13 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.FormatAlignJustify
-import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
+import com.example.ui.components.smartZoomPanGestures
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -96,8 +96,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -130,6 +132,7 @@ fun PdfReaderScreen(
     onToggleTextSelectionMode: () -> Unit,
     onToggleSearch: () -> Unit,
     onSearchQueryChanged: (String) -> Unit,
+    onManagePagesClick: () -> Unit,
     onSaveImmediately: () -> Unit,
     getPdfEngine: () -> PdfEngine?,
     modifier: Modifier = Modifier
@@ -143,6 +146,7 @@ fun PdfReaderScreen(
     var jumpPageInput by remember { mutableStateOf("") }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isNightSheetMode by remember { mutableStateOf(false) }
+    var hasRestoredInitialPage by remember(uiState.book?.id) { mutableStateOf(false) }
 
     // Zoom and pan state
     var scale by remember { mutableFloatStateOf(1f) }
@@ -160,9 +164,10 @@ fun PdfReaderScreen(
         }
     }
 
-    // Scroll to initial saved page on first load
-    LaunchedEffect(uiState.pdfTotalPages) {
-        if (uiState.pdfTotalPages > 0) {
+    // Scroll to initial saved page once after document finishes loading
+    LaunchedEffect(uiState.isLoading, uiState.book?.id, uiState.pdfTotalPages) {
+        if (!uiState.isLoading && uiState.book != null && !hasRestoredInitialPage && uiState.pdfTotalPages > 0) {
+            hasRestoredInitialPage = true
             val initialIndex = (uiState.pdfCurrentPage - 1).coerceIn(0, uiState.pdfTotalPages - 1)
             if (initialIndex > 0) {
                 listState.scrollToItem(initialIndex)
@@ -217,24 +222,28 @@ fun PdfReaderScreen(
             }
         } else {
             // Continuous Vertical Pages Flow
+            var containerSize by remember { mutableStateOf(IntSize.Zero) }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
+                    .onSizeChanged { containerSize = it }
+                    .smartZoomPanGestures(
+                        currentScale = { scale },
+                        onTransform = { zoom, pan ->
                             scale = (scale * zoom).coerceIn(1f, 4f)
-                            if (scale == 1f) {
+                            if (scale <= 1.02f) {
+                                scale = 1f
                                 offset = Offset.Zero
                             } else {
-                                val maxOffsetX = (size.width * (scale - 1)) / 2f
-                                val maxOffsetY = (size.height * (scale - 1)) / 2f
+                                val maxOffsetX = (containerSize.width * (scale - 1)) / 2f
+                                val maxOffsetY = (containerSize.height * (scale - 1)) / 2f
                                 offset = Offset(
                                     x = (offset.x + pan.x).coerceIn(-maxOffsetX, maxOffsetX),
                                     y = (offset.y + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
                                 )
                             }
                         }
-                    }
+                    )
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onDoubleTap = {
@@ -250,8 +259,8 @@ fun PdfReaderScreen(
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(
-                        top = 64.dp,
-                        bottom = 80.dp,
+                        top = 96.dp,
+                        bottom = 100.dp,
                         start = 12.dp,
                         end = 12.dp
                     ),
@@ -289,6 +298,7 @@ fun PdfReaderScreen(
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(top = 70.dp, end = 16.dp)
             ) {
                 Surface(
@@ -363,6 +373,17 @@ fun PdfReaderScreen(
                                 }
                             },
                             actions = {
+                                // Page Manager & Extract
+                                IconButton(
+                                    onClick = {
+                                        onSaveImmediately()
+                                        onManagePagesClick()
+                                    },
+                                    modifier = Modifier.testTag("pdf_manage_pages_top_button")
+                                ) {
+                                    Icon(Icons.Default.GridView, contentDescription = "إدارة واستخراج الصفحات", tint = WaraqNeonGreen)
+                                }
+
                                 // Search
                                 IconButton(onClick = onToggleSearch) {
                                     Icon(Icons.Default.Search, contentDescription = "بحث", tint = WaraqTextPrimary)
@@ -377,15 +398,6 @@ fun PdfReaderScreen(
                                     )
                                 }
 
-                                // Share
-                                IconButton(
-                                    onClick = {
-                                        shareDocumentText(context, uiState.book?.title ?: "", uiState.extractedPageText)
-                                    }
-                                ) {
-                                    Icon(Icons.Default.Share, contentDescription = "مشاركة", tint = WaraqTextPrimary)
-                                }
-
                                 // More menu
                                 Box {
                                     IconButton(onClick = { showMoreMenu = true }) {
@@ -396,6 +408,27 @@ fun PdfReaderScreen(
                                         onDismissRequest = { showMoreMenu = false },
                                         modifier = Modifier.background(WaraqSurfaceElevated)
                                     ) {
+                                        DropdownMenuItem(
+                                            text = { Text("إدارة واستخراج الصفحات", color = WaraqTextPrimary) },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.GridView, contentDescription = null, tint = WaraqNeonGreen)
+                                            },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onSaveImmediately()
+                                                onManagePagesClick()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("مشاركة نص الصفحة", color = WaraqTextPrimary) },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.Share, contentDescription = null, tint = WaraqNeonGreen)
+                                            },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                shareDocumentText(context, uiState.book?.title ?: "", uiState.extractedPageText)
+                                            }
+                                        )
                                         DropdownMenuItem(
                                             text = {
                                                 Text(
@@ -510,7 +543,7 @@ fun PdfReaderScreen(
                 }
             }
 
-            // Bottom Tools Bar (Inspired by the 5 tools in user's screenshot)
+            // Bottom Tools Bar (with navigationBarsPadding and Page Manager button)
             AnimatedVisibility(
                 visible = showControls,
                 enter = slideInVertically { it } + fadeIn(),
@@ -526,15 +559,20 @@ fun PdfReaderScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .navigationBarsPadding()
                             .padding(horizontal = 8.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. More Tools / View Mode
+                        // 1. Page Manager & Extract
                         BottomToolItem(
-                            icon = Icons.Default.FitScreen,
-                            label = "المزيد",
-                            onClick = { onToggleFitMode() }
+                            icon = Icons.Default.GridView,
+                            label = "إدارة الصفحات",
+                            tint = WaraqNeonGreen,
+                            onClick = {
+                                onSaveImmediately()
+                                onManagePagesClick()
+                            }
                         )
 
                         // 2. Jump to page (Fill / Go)
@@ -773,19 +811,16 @@ fun PdfPageCardItem(
     isNightMode: Boolean,
     modifier: Modifier = Modifier
 ) {
-    var bitmap by remember(pageIndex) { mutableStateOf<Bitmap?>(null) }
-    var isLoading by remember(pageIndex) { mutableStateOf(true) }
+    var bitmap by remember(pageIndex, engine) { mutableStateOf<Bitmap?>(null) }
+    var pageRatio by remember(pageIndex, engine) {
+        mutableFloatStateOf(engine?.getCachedAspectRatio(pageIndex) ?: 1.414f)
+    }
 
     LaunchedEffect(pageIndex, engine) {
         if (engine != null) {
-            isLoading = true
+            pageRatio = engine.loadAspectRatio(pageIndex)
             bitmap = engine.renderPage(pageIndex, 1080)
-            isLoading = false
         }
-    }
-
-    val pageRatio = remember(pageIndex, engine) {
-        engine?.getPageAspectRatio(pageIndex) ?: 1.414f
     }
 
     // Authentic Document Paper Page Card with white background, margin, and shadow

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
@@ -66,6 +67,7 @@ fun BookCard(
     onRenameClick: () -> Unit,
     onShareClick: () -> Unit,
     onDeleteClick: () -> Unit,
+    onManagePagesClick: () -> Unit = {},
     isGrid: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -203,6 +205,16 @@ fun BookCard(
                             onClick = {
                                 menuExpanded = false
                                 onClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("إدارة واستخراج الصفحات", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = {
+                                Icon(Icons.Default.GridView, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onManagePagesClick()
                             }
                         )
                         DropdownMenuItem(
