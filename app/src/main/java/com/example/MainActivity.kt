@@ -171,7 +171,6 @@ class MainActivity : ComponentActivity() {
                                 navController.navigate("page_manager/$bookId")
                             },
                             onSaveImmediately = { readerViewModel.savePositionImmediately() },
-                            onSharePageText = { onReady -> readerViewModel.loadPageTextForShare(onReady) },
                             getPdfEngine = { readerViewModel.getPdfEngine() }
                         )
                     }
