@@ -76,6 +76,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var wordSearchJob: Job? = null
     private var paginationJob: Job? = null
     private var bookmarkCheckJob: Job? = null
+    private var pageTextJob: Job? = null
     private var currentBookId: Long = -1
 
     fun getPdfEngine(): PdfEngine? = pdfEngine
@@ -272,9 +273,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadPageTextInternal(page1Based: Int) {
         val engine = pdfEngine ?: return
-        viewModelScope.launch {
+        val requestedBookId = currentBookId
+        pageTextJob?.cancel()
+        pageTextJob = viewModelScope.launch {
+            // Rapid scrolling should not queue a full-document text extraction for every page.
+            delay(120)
             val text = engine.getPageText(page1Based - 1)
-            _uiState.update { it.copy(extractedPageText = text) }
+            val state = _uiState.value
+            if (currentBookId == requestedBookId &&
+                state.book?.id == requestedBookId &&
+                state.pdfCurrentPage == page1Based
+            ) {
+                _uiState.update { it.copy(extractedPageText = text) }
+            }
         }
     }
 
