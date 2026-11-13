@@ -142,6 +142,9 @@ class MainActivity : ComponentActivity() {
                             onToggleTextSelectionMode = { readerViewModel.toggleTextSelectionMode() },
                             onToggleSearch = { readerViewModel.togglePdfSearch() },
                             onSearchQueryChanged = { readerViewModel.onPdfSearchQueryChanged(it) },
+                            onSelectSearchResult = { readerViewModel.selectPdfSearchResult(it) },
+                            onNextSearchResult = { readerViewModel.nextPdfSearchResult() },
+                            onPreviousSearchResult = { readerViewModel.previousPdfSearchResult() },
                             onManagePagesClick = {
                                 navController.navigate("page_manager/$bookId")
                             },
@@ -167,6 +170,11 @@ class MainActivity : ComponentActivity() {
                             onScrolledTo = { readerViewModel.onWordPageScrolledTo(it) },
                             onChangeFontSize = { readerViewModel.changeWordFontSize(it) },
                             onToggleBookmark = { readerViewModel.toggleBookmark() },
+                            onToggleSearch = { readerViewModel.toggleWordSearch() },
+                            onSearchQueryChanged = { readerViewModel.onWordSearchQueryChanged(it) },
+                            onSelectSearchResult = { readerViewModel.selectWordSearchResult(it) },
+                            onNextSearchResult = { readerViewModel.nextWordSearchResult() },
+                            onPreviousSearchResult = { readerViewModel.previousWordSearchResult() },
                             onManagePagesClick = {
                                 navController.navigate("page_manager/$bookId")
                             },

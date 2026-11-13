@@ -12,18 +12,23 @@ import androidx.compose.ui.input.pointer.positionChanged
 import kotlin.math.abs
 
 /**
- * Pinch-to-zoom and zoomed-pan gesture modifier that NEVER steals 1-finger vertical scrolling
- * from LazyColumn when zoom scale is at 1.0x.
+ * Pinch-to-zoom and zoomed-pan gesture modifier.
+ * - Allows zooming OUT (< 1.0f) and zooming IN (> 1.0f).
+ * - When scale <= 1.05f (including zoomed-out states!), 1-finger drags are NEVER consumed,
+ *   letting LazyColumn scroll freely at full speed without ever locking or stalling.
+ * - Calls [onGestureEnd] when all fingers are lifted so near-1.0x scales can snap cleanly.
  */
 fun Modifier.smartZoomPanGestures(
     currentScale: () -> Float,
-    onTransform: (zoomChange: Float, panChange: Offset) -> Unit
+    onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
+    onGestureEnd: () -> Unit = {}
 ): Modifier = pointerInput(Unit) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false)
         var zoom = 1f
         var pan = Offset.Zero
         var pastTouchSlop = false
+        var didTransform = false
         val touchSlop = viewConfiguration.touchSlop
 
         do {
@@ -31,7 +36,7 @@ fun Modifier.smartZoomPanGestures(
             val canceled = event.changes.any { it.isConsumed }
             if (!canceled) {
                 val pointerCount = event.changes.count { it.pressed }
-                val shouldIntercept = pointerCount > 1 || currentScale() > 1.02f
+                val shouldIntercept = pointerCount > 1 || currentScale() > 1.05f
 
                 if (shouldIntercept) {
                     val zoomChange = event.calculateZoom()
@@ -50,6 +55,7 @@ fun Modifier.smartZoomPanGestures(
 
                     if (pastTouchSlop) {
                         if (zoomChange != 1f || panChange != Offset.Zero) {
+                            didTransform = true
                             onTransform(zoomChange, panChange)
                         }
                         event.changes.forEach { change ->
@@ -59,12 +65,15 @@ fun Modifier.smartZoomPanGestures(
                         }
                     }
                 } else {
-                    // Reset gesture accumulators so normal 1-finger scroll isn't delayed or stuck
                     zoom = 1f
                     pan = Offset.Zero
                     pastTouchSlop = false
                 }
             }
         } while (event.changes.any { it.pressed })
+
+        if (didTransform) {
+            onGestureEnd()
+        }
     }
 }

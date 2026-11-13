@@ -99,4 +99,27 @@ class ExampleRobolectricTest {
         assertEquals(90, selected[2].rotationDegrees)
         sampleFile.delete()
     }
+
+    @Test
+    fun `search results aggregate per page match counts and snippets cleanly`() {
+        val result16 = com.example.data.engine.PdfEngine.SearchResult(
+            pageNumber = 16,
+            matchCount = 1,
+            snippet = "اسمهان ايسر نور الشيخ سليمان",
+            matchedTerm = "اسمهان"
+        )
+        val result17 = com.example.data.engine.PdfEngine.SearchResult(
+            pageNumber = 17,
+            matchCount = 2,
+            snippet = "اسمهان الاسم والنسبة اسمهان",
+            matchedTerm = "اسمهان"
+        )
+        val results = listOf(result16, result17)
+        assertEquals(2, results.size)
+        assertEquals(16, results[0].pageNumber)
+        assertEquals(1, results[0].matchCount)
+        assertEquals(17, results[1].pageNumber)
+        assertEquals(2, results[1].matchCount)
+        assertEquals("اسمهان", results[0].matchedTerm)
+    }
 }

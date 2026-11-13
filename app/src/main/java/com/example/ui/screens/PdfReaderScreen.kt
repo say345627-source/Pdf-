@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
+import com.example.ui.components.DocumentSearchSheet
 import com.example.ui.components.smartZoomPanGestures
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -132,6 +133,9 @@ fun PdfReaderScreen(
     onToggleTextSelectionMode: () -> Unit,
     onToggleSearch: () -> Unit,
     onSearchQueryChanged: (String) -> Unit,
+    onSelectSearchResult: (Int) -> Unit,
+    onNextSearchResult: () -> Int?,
+    onPreviousSearchResult: () -> Int?,
     onManagePagesClick: () -> Unit,
     onSaveImmediately: () -> Unit,
     getPdfEngine: () -> PdfEngine?,
@@ -148,14 +152,18 @@ fun PdfReaderScreen(
     var isNightSheetMode by remember { mutableStateOf(false) }
     var hasRestoredInitialPage by remember(uiState.book?.id) { mutableStateOf(false) }
 
-    // Zoom and pan state
+    // Zoom and pan state (supports shrinking down to 0.55x and zooming up to 4x)
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
-    // Intercept back button to ensure state is saved and cleanly pops
+    // Intercept back button: close search sheet first if open, otherwise save & pop
     BackHandler {
-        onSaveImmediately()
-        onBack()
+        if (uiState.isPdfSearchActive) {
+            onToggleSearch()
+        } else {
+            onSaveImmediately()
+            onBack()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -230,24 +238,34 @@ fun PdfReaderScreen(
                     .smartZoomPanGestures(
                         currentScale = { scale },
                         onTransform = { zoom, pan ->
-                            scale = (scale * zoom).coerceIn(1f, 4f)
-                            if (scale <= 1.02f) {
-                                scale = 1f
+                            val newScale = (scale * zoom).coerceIn(0.55f, 4f)
+                            scale = newScale
+                            if (newScale <= 1.05f) {
                                 offset = Offset.Zero
                             } else {
-                                val maxOffsetX = (containerSize.width * (scale - 1)) / 2f
-                                val maxOffsetY = (containerSize.height * (scale - 1)) / 2f
-                                offset = Offset(
-                                    x = (offset.x + pan.x).coerceIn(-maxOffsetX, maxOffsetX),
-                                    y = (offset.y + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
-                                )
+                                val maxOffsetX = (containerSize.width * (newScale - 1)) / 2f
+                                val maxOffsetY = (containerSize.height * (newScale - 1)) / 2f
+                                val nextX = (offset.x + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                                val candidateY = offset.y + pan.y
+                                val clampedY = candidateY.coerceIn(-maxOffsetY, maxOffsetY)
+                                val overflowY = candidateY - clampedY
+                                offset = Offset(x = nextX, y = clampedY)
+                                if (overflowY != 0f) {
+                                    listState.dispatchRawDelta(-overflowY / newScale)
+                                }
+                            }
+                        },
+                        onGestureEnd = {
+                            if (scale in 0.95f..1.05f) {
+                                scale = 1f
+                                offset = Offset.Zero
                             }
                         }
                     )
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onDoubleTap = {
-                                scale = if (scale > 1.2f) 1f else 2f
+                                scale = if (scale > 1.2f || scale < 0.9f) 1f else 2f
                                 offset = Offset.Zero
                             },
                             onTap = {
@@ -264,12 +282,15 @@ fun PdfReaderScreen(
                         start = 12.dp,
                         end = 12.dp
                     ),
-                    verticalArrangement = Arrangement.spacedBy(14.dp), // Distinct gap between pages
+                    verticalArrangement = Arrangement.spacedBy(
+                        if (scale < 1f) (14f * scale).coerceAtLeast(8f).dp else 14.dp
+                    ),
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
+                            val zoomScale = if (scale > 1.05f) scale else 1f
+                            scaleX = zoomScale
+                            scaleY = zoomScale
                             translationX = offset.x
                             translationY = offset.y
                         }
@@ -280,13 +301,21 @@ fun PdfReaderScreen(
                         key = { it }
                     ) { pageIndex ->
                         val engine = getPdfEngine()
-                        PdfPageCardItem(
-                            pageIndex = pageIndex,
-                            totalPages = uiState.pdfTotalPages,
-                            engine = engine,
-                            fitMode = uiState.pdfFitMode,
-                            isNightMode = isNightSheetMode
-                        )
+                        val widthFraction = scale.coerceIn(0.55f, 1.0f)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(modifier = Modifier.fillMaxWidth(widthFraction)) {
+                                PdfPageCardItem(
+                                    pageIndex = pageIndex,
+                                    totalPages = uiState.pdfTotalPages,
+                                    engine = engine,
+                                    fitMode = uiState.pdfFitMode,
+                                    isNightMode = isNightSheetMode
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -385,8 +414,15 @@ fun PdfReaderScreen(
                                 }
 
                                 // Search
-                                IconButton(onClick = onToggleSearch) {
-                                    Icon(Icons.Default.Search, contentDescription = "بحث", tint = WaraqTextPrimary)
+                                IconButton(
+                                    onClick = onToggleSearch,
+                                    modifier = Modifier.testTag("pdf_search_top_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "بحث في الملف",
+                                        tint = if (uiState.isPdfSearchActive) WaraqNeonGreen else WaraqTextPrimary
+                                    )
                                 }
 
                                 // Bookmark
@@ -475,77 +511,13 @@ fun PdfReaderScreen(
                             },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = WaraqDarkBg.copy(alpha = 0.95f))
                         )
-
-                        // In-document Search Row
-                        AnimatedVisibility(visible = uiState.isPdfSearchActive) {
-                            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                                OutlinedTextField(
-                                    value = uiState.pdfSearchQuery,
-                                    onValueChange = onSearchQueryChanged,
-                                    placeholder = { Text("ابحث في نصوص المستند...", color = WaraqTextSecondary) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Search, contentDescription = null, tint = WaraqNeonGreen)
-                                    },
-                                    trailingIcon = {
-                                        IconButton(onClick = onToggleSearch) {
-                                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = WaraqTextSecondary)
-                                        }
-                                    },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = WaraqNeonGreen,
-                                        unfocusedBorderColor = WaraqBorder,
-                                        focusedTextColor = WaraqTextPrimary,
-                                        unfocusedTextColor = WaraqTextPrimary
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                if (uiState.pdfSearchResults.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "عُثر على ${uiState.pdfSearchResults.size} نتائج (اضغط للانتقال):",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = WaraqNeonGreen
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        uiState.pdfSearchResults.take(5).forEach { res ->
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(WaraqSurfaceElevated)
-                                                    .border(1.dp, WaraqBorder, RoundedCornerShape(6.dp))
-                                                    .clickable {
-                                                        scope.launch {
-                                                            listState.scrollToItem((res.pageNumber - 1).coerceAtLeast(0))
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                                            ) {
-                                                Text(
-                                                    text = "ص ${res.pageNumber}",
-                                                    color = WaraqTextPrimary,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
 
-            // Bottom Tools Bar (with navigationBarsPadding and Page Manager button)
+            // Bottom Tools Bar (hidden while search sheet is active)
             AnimatedVisibility(
-                visible = showControls,
+                visible = showControls && !uiState.isPdfSearchActive,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -560,55 +532,100 @@ fun PdfReaderScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceAround,
+                            .padding(horizontal = 6.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. Page Manager & Extract
+                        // 1. Search inside file
+                        BottomToolItem(
+                            icon = Icons.Default.Search,
+                            label = "بحث",
+                            tint = WaraqNeonGreen,
+                            modifier = Modifier.weight(1f).testTag("pdf_search_bottom_button"),
+                            onClick = onToggleSearch
+                        )
+
+                        // 2. Page Manager & Extract
                         BottomToolItem(
                             icon = Icons.Default.GridView,
-                            label = "إدارة الصفحات",
+                            label = "الصفحات",
                             tint = WaraqNeonGreen,
+                            modifier = Modifier.weight(1f),
                             onClick = {
                                 onSaveImmediately()
                                 onManagePagesClick()
                             }
                         )
 
-                        // 2. Jump to page (Fill / Go)
+                        // 3. Jump to page
                         BottomToolItem(
                             icon = Icons.Default.SwapVert,
-                            label = "انتقال سريع",
+                            label = "انتقال",
+                            modifier = Modifier.weight(1f),
                             onClick = {
                                 jumpPageInput = uiState.pdfCurrentPage.toString()
                                 showJumpDialog = true
                             }
                         )
 
-                        // 3. Bookmark (Sign / Mark)
+                        // 4. Bookmark
                         BottomToolItem(
                             icon = if (uiState.isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                             label = "إشارة",
                             tint = if (uiState.isBookmarked) WaraqNeonGreen else WaraqTextSecondary,
+                            modifier = Modifier.weight(1f),
                             onClick = onToggleBookmark
                         )
 
-                        // 4. Text Selection / Copy (Add Note / Select)
+                        // 5. Text Selection / Copy
                         BottomToolItem(
                             icon = Icons.Default.SelectAll,
-                            label = "تحديد ونسخ",
+                            label = "تحديد",
                             tint = if (uiState.isTextSelectionMode) WaraqNeonGreen else WaraqTextSecondary,
+                            modifier = Modifier.weight(1f),
                             onClick = onToggleTextSelectionMode
-                        )
-
-                        // 5. Page Theme (Edit / Night)
-                        BottomToolItem(
-                            icon = Icons.Default.FormatAlignJustify,
-                            label = if (isNightSheetMode) "وضع ناصع" else "وضع هادئ",
-                            onClick = { isNightSheetMode = !isNightSheetMode }
                         )
                     }
                 }
+            }
+
+            // Bottom Search Results Sheet (Screenshot Replica)
+            AnimatedVisibility(
+                visible = uiState.isPdfSearchActive,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                DocumentSearchSheet(
+                    query = uiState.pdfSearchQuery,
+                    results = uiState.pdfSearchResults,
+                    activeIndex = uiState.activeSearchIndex,
+                    isSearching = uiState.isSearching,
+                    onQueryChanged = onSearchQueryChanged,
+                    onResultClick = { index, pageNumber ->
+                        onSelectSearchResult(index)
+                        scope.launch {
+                            listState.animateScrollToItem((pageNumber - 1).coerceAtLeast(0))
+                        }
+                    },
+                    onPreviousClick = {
+                        val targetPage = onPreviousSearchResult()
+                        if (targetPage != null) {
+                            scope.launch {
+                                listState.animateScrollToItem((targetPage - 1).coerceAtLeast(0))
+                            }
+                        }
+                    },
+                    onNextClick = {
+                        val targetPage = onNextSearchResult()
+                        if (targetPage != null) {
+                            scope.launch {
+                                listState.animateScrollToItem((targetPage - 1).coerceAtLeast(0))
+                            }
+                        }
+                    },
+                    onClose = onToggleSearch
+                )
             }
         }
 
@@ -879,14 +896,15 @@ fun BottomToolItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     tint: Color = WaraqTextSecondary
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 6.dp, vertical = 6.dp)
     ) {
         Icon(
             imageVector = icon,
@@ -899,7 +917,9 @@ fun BottomToolItem(
             text = label,
             color = tint,
             fontSize = 10.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

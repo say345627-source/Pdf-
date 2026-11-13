@@ -74,6 +74,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.example.ui.components.DocumentSearchSheet
 import com.example.ui.components.smartZoomPanGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -134,6 +135,11 @@ fun WordReaderScreen(
     onScrolledTo: (Int) -> Unit,
     onChangeFontSize: (Float) -> Unit,
     onToggleBookmark: () -> Unit,
+    onToggleSearch: () -> Unit,
+    onSearchQueryChanged: (String) -> Unit,
+    onSelectSearchResult: (Int) -> Unit,
+    onNextSearchResult: () -> Int?,
+    onPreviousSearchResult: () -> Int?,
     onManagePagesClick: () -> Unit,
     onSaveImmediately: () -> Unit,
     modifier: Modifier = Modifier
@@ -143,8 +149,6 @@ fun WordReaderScreen(
     val listState = rememberLazyListState()
 
     var showControls by remember { mutableStateOf(true) }
-    var isSearchActive by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
     var showJumpDialog by remember { mutableStateOf(false) }
     var jumpPageInput by remember { mutableStateOf("") }
     var isSepiaPageMode by remember { mutableStateOf(false) }
@@ -152,14 +156,18 @@ fun WordReaderScreen(
     var showTextSelectionSheet by remember { mutableStateOf(false) }
     var hasRestoredInitialPage by remember(uiState.book?.id) { mutableStateOf(false) }
 
-    // Zoom and pan state
+    // Zoom and pan state (supports shrinking down to 0.55x and zooming up to 3.5x)
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
-    // Intercept back button to guarantee position is saved before leaving
+    // Intercept back button: close search sheet first if open, otherwise save & pop
     BackHandler {
-        onSaveImmediately()
-        onBack()
+        if (uiState.isWordSearchActive) {
+            onToggleSearch()
+        } else {
+            onSaveImmediately()
+            onBack()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -230,24 +238,34 @@ fun WordReaderScreen(
                     .smartZoomPanGestures(
                         currentScale = { scale },
                         onTransform = { zoom, pan ->
-                            scale = (scale * zoom).coerceIn(1f, 3.5f)
-                            if (scale <= 1.02f) {
-                                scale = 1f
+                            val newScale = (scale * zoom).coerceIn(0.55f, 3.5f)
+                            scale = newScale
+                            if (newScale <= 1.05f) {
                                 offset = Offset.Zero
                             } else {
-                                val maxOffsetX = (containerSize.width * (scale - 1)) / 2f
-                                val maxOffsetY = (containerSize.height * (scale - 1)) / 2f
-                                offset = Offset(
-                                    x = (offset.x + pan.x).coerceIn(-maxOffsetX, maxOffsetX),
-                                    y = (offset.y + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
-                                )
+                                val maxOffsetX = (containerSize.width * (newScale - 1)) / 2f
+                                val maxOffsetY = (containerSize.height * (newScale - 1)) / 2f
+                                val nextX = (offset.x + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                                val candidateY = offset.y + pan.y
+                                val clampedY = candidateY.coerceIn(-maxOffsetY, maxOffsetY)
+                                val overflowY = candidateY - clampedY
+                                offset = Offset(x = nextX, y = clampedY)
+                                if (overflowY != 0f) {
+                                    listState.dispatchRawDelta(-overflowY / newScale)
+                                }
+                            }
+                        },
+                        onGestureEnd = {
+                            if (scale in 0.95f..1.05f) {
+                                scale = 1f
+                                offset = Offset.Zero
                             }
                         }
                     )
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onDoubleTap = {
-                                scale = if (scale > 1.2f) 1f else 1.8f
+                                scale = if (scale > 1.2f || scale < 0.9f) 1f else 1.8f
                                 offset = Offset.Zero
                             },
                             onTap = {
@@ -264,12 +282,15 @@ fun WordReaderScreen(
                         start = 12.dp,
                         end = 12.dp
                     ),
-                    verticalArrangement = Arrangement.spacedBy(16.dp), // Distinct page gap like screenshot
+                    verticalArrangement = Arrangement.spacedBy(
+                        if (scale < 1f) (16f * scale).coerceAtLeast(8f).dp else 16.dp
+                    ),
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
+                            val zoomScale = if (scale > 1.05f) scale else 1f
+                            scaleX = zoomScale
+                            scaleY = zoomScale
                             translationX = offset.x
                             translationY = offset.y
                         }
@@ -279,14 +300,22 @@ fun WordReaderScreen(
                         items = uiState.wordPages,
                         key = { _, page -> page.pageNumber }
                     ) { _, page ->
-                        WordPageCard(
-                            page = page,
-                            totalPages = uiState.wordTotalPages,
-                            baseFontSize = uiState.wordFontSizeSp,
-                            searchQuery = searchQuery,
-                            isSepia = isSepiaPageMode,
-                            isDark = isDarkPageMode
-                        )
+                        val widthFraction = scale.coerceIn(0.55f, 1.0f)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(modifier = Modifier.fillMaxWidth(widthFraction)) {
+                                WordPageCard(
+                                    page = page,
+                                    totalPages = uiState.wordTotalPages,
+                                    baseFontSize = uiState.wordFontSizeSp,
+                                    searchQuery = uiState.wordSearchQuery,
+                                    isSepia = isSepiaPageMode,
+                                    isDark = isDarkPageMode
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -385,8 +414,15 @@ fun WordReaderScreen(
                                 }
 
                                 // Search
-                                IconButton(onClick = { isSearchActive = !isSearchActive }) {
-                                    Icon(Icons.Default.Search, contentDescription = "بحث", tint = WaraqTextPrimary)
+                                IconButton(
+                                    onClick = onToggleSearch,
+                                    modifier = Modifier.testTag("word_search_top_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "بحث في الملف",
+                                        tint = if (uiState.isWordSearchActive) WaraqNeonGreen else WaraqTextPrimary
+                                    )
                                 }
 
                                 // Bookmark
@@ -405,46 +441,13 @@ fun WordReaderScreen(
                             },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = WaraqDarkBg.copy(alpha = 0.95f))
                         )
-
-                        // Search Bar
-                        AnimatedVisibility(visible = isSearchActive) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(WaraqDarkBg)
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    placeholder = { Text("ابحث في صفحات المستند...", color = WaraqTextSecondary) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Search, contentDescription = null, tint = WaraqNeonGreen)
-                                    },
-                                    trailingIcon = {
-                                        IconButton(onClick = { isSearchActive = false }) {
-                                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = WaraqTextSecondary)
-                                        }
-                                    },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = WaraqNeonGreen,
-                                        unfocusedBorderColor = WaraqBorder,
-                                        focusedTextColor = WaraqTextPrimary,
-                                        unfocusedTextColor = WaraqTextPrimary
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
                     }
                 }
             }
 
-            // Bottom Tools Bar (with navigationBarsPadding and Page Manager)
+            // Bottom Tools Bar (hidden while search sheet is open)
             AnimatedVisibility(
-                visible = showControls,
+                visible = showControls && !uiState.isWordSearchActive,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -459,45 +462,58 @@ fun WordReaderScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceAround,
+                            .padding(horizontal = 4.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. Page Manager & Extract
+                        // 1. Search inside file
+                        BottomToolItem(
+                            icon = Icons.Default.Search,
+                            label = "بحث",
+                            tint = WaraqNeonGreen,
+                            modifier = Modifier.weight(1f).testTag("word_search_bottom_button"),
+                            onClick = onToggleSearch
+                        )
+
+                        // 2. Page Manager & Extract
                         BottomToolItem(
                             icon = Icons.Default.GridView,
-                            label = "إدارة الصفحات",
+                            label = "الصفحات",
                             tint = WaraqNeonGreen,
+                            modifier = Modifier.weight(1f),
                             onClick = {
                                 onSaveImmediately()
                                 onManagePagesClick()
                             }
                         )
 
-                        // 2. Font Size Control
+                        // 3. Font Size Control
                         BottomToolItem(
                             icon = Icons.Default.FormatSize,
-                            label = "تكبير A+",
+                            label = "A+",
+                            modifier = Modifier.weight(1f),
                             onClick = { onChangeFontSize(1.5f) }
                         )
 
                         BottomToolItem(
                             icon = Icons.Default.FormatSize,
-                            label = "تصغير A-",
+                            label = "A-",
+                            modifier = Modifier.weight(1f),
                             onClick = { onChangeFontSize(-1.5f) }
                         )
 
-                        // 3. Jump to page
+                        // 4. Jump to page
                         BottomToolItem(
                             icon = Icons.Default.SwapVert,
                             label = "انتقال",
+                            modifier = Modifier.weight(1f),
                             onClick = {
                                 jumpPageInput = uiState.wordCurrentPage.toString()
                                 showJumpDialog = true
                             }
                         )
 
-                        // 4. Page Theme (Sepia / White / Dark)
+                        // 5. Page Theme (Sepia / White / Dark)
                         BottomToolItem(
                             icon = Icons.Default.FormatAlignJustify,
                             label = when {
@@ -505,6 +521,7 @@ fun WordReaderScreen(
                                 isDarkPageMode -> "أبيض"
                                 else -> "دافئ"
                             },
+                            modifier = Modifier.weight(1f),
                             onClick = {
                                 if (!isSepiaPageMode && !isDarkPageMode) {
                                     isSepiaPageMode = true
@@ -518,6 +535,45 @@ fun WordReaderScreen(
                         )
                     }
                 }
+            }
+
+            // Bottom Search Results Sheet (Screenshot Replica)
+            AnimatedVisibility(
+                visible = uiState.isWordSearchActive,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                DocumentSearchSheet(
+                    query = uiState.wordSearchQuery,
+                    results = uiState.wordSearchResults,
+                    activeIndex = uiState.activeSearchIndex,
+                    isSearching = false,
+                    onQueryChanged = onSearchQueryChanged,
+                    onResultClick = { index, pageNumber ->
+                        onSelectSearchResult(index)
+                        scope.launch {
+                            listState.animateScrollToItem((pageNumber - 1).coerceAtLeast(0))
+                        }
+                    },
+                    onPreviousClick = {
+                        val targetPage = onPreviousSearchResult()
+                        if (targetPage != null) {
+                            scope.launch {
+                                listState.animateScrollToItem((targetPage - 1).coerceAtLeast(0))
+                            }
+                        }
+                    },
+                    onNextClick = {
+                        val targetPage = onNextSearchResult()
+                        if (targetPage != null) {
+                            scope.launch {
+                                listState.animateScrollToItem((targetPage - 1).coerceAtLeast(0))
+                            }
+                        }
+                    },
+                    onClose = onToggleSearch
+                )
             }
         }
 

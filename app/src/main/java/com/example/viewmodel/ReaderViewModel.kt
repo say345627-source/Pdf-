@@ -40,14 +40,19 @@ data class ReaderUiState(
     val extractedPageText: String = "",
     val isTextSelectionMode: Boolean = false,
     val isPdfSearchActive: Boolean = false,
+    val isSearching: Boolean = false,
     val pdfSearchQuery: String = "",
     val pdfSearchResults: List<PdfEngine.SearchResult> = emptyList(),
+    val activeSearchIndex: Int = 0,
     // Word State
     val wordElements: List<DocElement> = emptyList(),
     val wordPages: List<DocPage> = emptyList(),
     val wordTotalPages: Int = 1,
     val wordCurrentPage: Int = 1,
     val wordFontSizeSp: Float = 17f,
+    val isWordSearchActive: Boolean = false,
+    val wordSearchQuery: String = "",
+    val wordSearchResults: List<PdfEngine.SearchResult> = emptyList(),
     // Bookmark
     val isBookmarked: Boolean = false,
     val bookmarks: List<BookmarkEntity> = emptyList()
@@ -65,6 +70,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private var pdfEngine: PdfEngine? = null
     private var saveJob: Job? = null
+    private var searchJob: Job? = null
     private var currentBookId: Long = -1
 
     fun getPdfEngine(): PdfEngine? = pdfEngine
@@ -293,26 +299,135 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun togglePdfSearch() {
+        searchJob?.cancel()
         _uiState.update {
             it.copy(
                 isPdfSearchActive = !it.isPdfSearchActive,
+                isSearching = false,
                 pdfSearchQuery = "",
-                pdfSearchResults = emptyList()
+                pdfSearchResults = emptyList(),
+                activeSearchIndex = 0
             )
         }
     }
 
     fun onPdfSearchQueryChanged(query: String) {
-        _uiState.update { it.copy(pdfSearchQuery = query) }
+        _uiState.update { it.copy(pdfSearchQuery = query, activeSearchIndex = 0) }
         val engine = pdfEngine ?: return
+        searchJob?.cancel()
         if (query.isBlank()) {
-            _uiState.update { it.copy(pdfSearchResults = emptyList()) }
+            _uiState.update { it.copy(pdfSearchResults = emptyList(), isSearching = false) }
             return
         }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
+            _uiState.update { it.copy(isSearching = true) }
+            delay(180)
             val results = engine.search(query)
-            _uiState.update { it.copy(pdfSearchResults = results) }
+            _uiState.update {
+                it.copy(
+                    pdfSearchResults = results,
+                    isSearching = false,
+                    activeSearchIndex = 0
+                )
+            }
         }
+    }
+
+    fun selectPdfSearchResult(index: Int) {
+        val total = _uiState.value.pdfSearchResults.size
+        if (total == 0) return
+        _uiState.update { it.copy(activeSearchIndex = index.coerceIn(0, total - 1)) }
+    }
+
+    fun nextPdfSearchResult(): Int? {
+        val results = _uiState.value.pdfSearchResults
+        if (results.isEmpty()) return null
+        val nextIdx = (_uiState.value.activeSearchIndex + 1) % results.size
+        _uiState.update { it.copy(activeSearchIndex = nextIdx) }
+        return results[nextIdx].pageNumber
+    }
+
+    fun previousPdfSearchResult(): Int? {
+        val results = _uiState.value.pdfSearchResults
+        if (results.isEmpty()) return null
+        val prevIdx = if (_uiState.value.activeSearchIndex - 1 < 0) results.lastIndex else _uiState.value.activeSearchIndex - 1
+        _uiState.update { it.copy(activeSearchIndex = prevIdx) }
+        return results[prevIdx].pageNumber
+    }
+
+    fun toggleWordSearch() {
+        _uiState.update {
+            it.copy(
+                isWordSearchActive = !it.isWordSearchActive,
+                wordSearchQuery = "",
+                wordSearchResults = emptyList(),
+                activeSearchIndex = 0
+            )
+        }
+    }
+
+    fun onWordSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(wordSearchQuery = query, activeSearchIndex = 0) }
+        val q = query.trim()
+        if (q.isBlank()) {
+            _uiState.update { it.copy(wordSearchResults = emptyList()) }
+            return
+        }
+        val results = mutableListOf<PdfEngine.SearchResult>()
+        _uiState.value.wordPages.forEach { page ->
+            val pageText = page.elements.joinToString(" ") { elem ->
+                when (elem) {
+                    is DocElement.Heading -> elem.text
+                    is DocElement.Paragraph -> elem.text
+                    is DocElement.ListItem -> elem.text
+                    is DocElement.Table -> elem.rows.flatten().joinToString(" ")
+                    is DocElement.Notice -> elem.message
+                    is DocElement.ImageItem -> elem.caption
+                }
+            }
+            var count = 0
+            var idx = pageText.indexOf(q, ignoreCase = true)
+            val firstIdx = idx
+            while (idx != -1) {
+                count++
+                idx = pageText.indexOf(q, idx + q.length, ignoreCase = true)
+            }
+            if (count > 0 && firstIdx != -1) {
+                val start = (firstIdx - 24).coerceAtLeast(0)
+                val end = (firstIdx + q.length + 36).coerceAtMost(pageText.length)
+                results.add(
+                    PdfEngine.SearchResult(
+                        pageNumber = page.pageNumber,
+                        matchCount = count,
+                        snippet = pageText.substring(start, end).replace("\n", " ").trim(),
+                        matchedTerm = q
+                    )
+                )
+            }
+        }
+        _uiState.update { it.copy(wordSearchResults = results, activeSearchIndex = 0) }
+    }
+
+    fun selectWordSearchResult(index: Int) {
+        val total = _uiState.value.wordSearchResults.size
+        if (total == 0) return
+        _uiState.update { it.copy(activeSearchIndex = index.coerceIn(0, total - 1)) }
+    }
+
+    fun nextWordSearchResult(): Int? {
+        val results = _uiState.value.wordSearchResults
+        if (results.isEmpty()) return null
+        val nextIdx = (_uiState.value.activeSearchIndex + 1) % results.size
+        _uiState.update { it.copy(activeSearchIndex = nextIdx) }
+        return results[nextIdx].pageNumber
+    }
+
+    fun previousWordSearchResult(): Int? {
+        val results = _uiState.value.wordSearchResults
+        if (results.isEmpty()) return null
+        val prevIdx = if (_uiState.value.activeSearchIndex - 1 < 0) results.lastIndex else _uiState.value.activeSearchIndex - 1
+        _uiState.update { it.copy(activeSearchIndex = prevIdx) }
+        return results[prevIdx].pageNumber
     }
 
     fun toggleFitMode() {
