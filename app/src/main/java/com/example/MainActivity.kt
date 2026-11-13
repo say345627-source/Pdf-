@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -105,6 +106,27 @@ class MainActivity : ComponentActivity() {
                             onManagePagesClick = { bookId ->
                                 navController.navigate("page_manager/$bookId")
                             },
+                            onEnterSelectionMode = { initialId ->
+                                libraryViewModel.enterSelectionMode(initialId)
+                            },
+                            onToggleBookSelection = { bookId ->
+                                libraryViewModel.toggleBookSelection(bookId)
+                            },
+                            onSelectAllSelection = {
+                                libraryViewModel.selectAllVisibleBooks()
+                            },
+                            onClearSelection = {
+                                libraryViewModel.clearSelection()
+                            },
+                            onToggleBookMark = { book ->
+                                libraryViewModel.toggleBookMarked(book)
+                            },
+                            onMarkSelected = { mark ->
+                                libraryViewModel.markSelectedBooks(mark)
+                            },
+                            onDeleteSelected = {
+                                libraryViewModel.deleteSelectedBooks()
+                            },
                             onDismissNotification = {
                                 libraryViewModel.dismissNotification()
                             }
@@ -149,6 +171,7 @@ class MainActivity : ComponentActivity() {
                                 navController.navigate("page_manager/$bookId")
                             },
                             onSaveImmediately = { readerViewModel.savePositionImmediately() },
+                            onSharePageText = { onReady -> readerViewModel.loadPageTextForShare(onReady) },
                             getPdfEngine = { readerViewModel.getPdfEngine() }
                         )
                     }
@@ -272,7 +295,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openBookScreen(bookId: Long, onNavigate: (String) -> Unit) {
         val db = WaraqDatabase.getInstance(this)
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             val book = db.bookDao().getBookById(bookId) ?: return@launch
             withContext(Dispatchers.Main) {
                 val route = if (book.fileType.equals("PDF", ignoreCase = true)) {

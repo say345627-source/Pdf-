@@ -40,7 +40,7 @@ object DocxEngine {
             // Read relationships to map rId -> media path
             val relsMap = parseRelationships(zipFile)
 
-            // Cache images in memory
+            // Cache images in memory safely with downsampling to avoid OOM on large photos
             val imagesCache = mutableMapOf<String, Bitmap>()
             for ((rId, target) in relsMap) {
                 if (target.contains("media/", ignoreCase = true)) {
@@ -49,7 +49,7 @@ object DocxEngine {
                     if (entry != null) {
                         zipFile.getInputStream(entry).use { stream ->
                             val bytes = stream.readBytes()
-                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            val bitmap = decodeSampledBitmap(bytes, maxDim = 1080)
                             if (bitmap != null) {
                                 imagesCache[rId] = bitmap
                             }
@@ -476,5 +476,24 @@ object DocxEngine {
         }
 
         return pages
+    }
+
+    private fun decodeSampledBitmap(bytes: ByteArray, maxDim: Int): Bitmap? {
+        return try {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOpts)
+            var sampleSize = 1
+            val maxSide = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+            while (maxSide / sampleSize > maxDim) {
+                sampleSize *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
+        } catch (_: Throwable) {
+            null
+        }
     }
 }

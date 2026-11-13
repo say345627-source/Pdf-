@@ -1,8 +1,9 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,14 +16,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -32,6 +34,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,18 +51,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.BookEntity
-import com.example.ui.theme.WaraqBorder
 import com.example.ui.theme.WaraqDocxColor
 import com.example.ui.theme.WaraqError
 import com.example.ui.theme.WaraqNeonGreen
 import com.example.ui.theme.WaraqPdfColor
-import com.example.ui.theme.WaraqSurfaceElevated
-import com.example.ui.theme.WaraqTextPrimary
-import com.example.ui.theme.WaraqTextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private val cachedDateFormat = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BookCard(
     book: BookEntity,
@@ -68,6 +72,11 @@ fun BookCard(
     onShareClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onManagePagesClick: () -> Unit = {},
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onLongClick: () -> Unit = {},
+    onToggleMarkClick: () -> Unit = {},
+    onSelectThisBookClick: () -> Unit = {},
     isGrid: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -77,12 +86,21 @@ fun BookCard(
     val formattedSize = remember(book.fileSizeBytes) { formatFileSize(book.fileSizeBytes) }
     val formattedDate = remember(book.dateAddedTimestamp) { formatDate(book.dateAddedTimestamp) }
 
+    val rowBackgroundColor = if (isSelectionMode && isSelected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+    } else {
+        Color.Transparent
+    }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .testTag("book_item_${book.id}")
-            .clickable { onClick() },
-        color = Color.Transparent
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
+        color = rowBackgroundColor
     ) {
         Column {
             Row(
@@ -91,7 +109,37 @@ fun BookCard(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // File Icon / Paper Badge (exact screenshot replica: white folded paper with red/blue tag)
+                if (isSelectionMode) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("book_select_checkbox_${book.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "تم تحديد الملف",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .border(
+                                        2.dp,
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                                        CircleShape
+                                    )
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+
+                // File Icon / Paper Badge
                 Box(
                     modifier = Modifier
                         .size(width = 46.dp, height = 54.dp)
@@ -100,12 +148,11 @@ fun BookCard(
                         .background(Color.White)
                         .border(
                             1.dp,
-                            Color(0xFFE0E0E0),
+                            if (book.isFavorite) MaterialTheme.colorScheme.primary else Color(0xFFE0E0E0),
                             RoundedCornerShape(topStart = 4.dp, bottomStart = 6.dp, bottomEnd = 6.dp, topEnd = 12.dp)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Folded corner effect
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -113,7 +160,6 @@ fun BookCard(
                             .background(Color(0xFFD5D5D5))
                     )
 
-                    // Tag Badge (PDF / DOCX)
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(3.dp))
@@ -133,15 +179,46 @@ fun BookCard(
 
                 // File Details
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = book.originalFileName.ifBlank { book.title },
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = book.originalFileName.ifBlank { book.title },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+
+                        if (book.isFavorite) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                                modifier = Modifier.testTag("book_marked_badge_${book.id}")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text(
+                                        text = "محدد",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(3.dp))
 
@@ -179,74 +256,121 @@ fun BookCard(
                     }
                 }
 
-                // 3 Vertical Dots Menu (matching screenshot)
-                Box {
+                if (!isSelectionMode) {
+                    // Quick 1-tap File Mark Toggle (48dp accessible touch target)
                     IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(36.dp)
+                        onClick = onToggleMarkClick,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("book_mark_toggle_${book.id}")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "خيارات الملف",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            imageVector = if (book.isFavorite) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                            contentDescription = if (book.isFavorite) "إزالة علامة التحديد" else "وضع علامة تحديد",
+                            tint = if (book.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                     }
 
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("فتح المستند", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(Icons.Default.MenuBook, contentDescription = null, tint = WaraqNeonGreen)
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onClick()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("إدارة واستخراج الصفحات", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(Icons.Default.GridView, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onManagePagesClick()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("إعادة تسمية", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onRenameClick()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("مشاركة الملف", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onShareClick()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("إزالة من القائمة", color = WaraqError) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Delete, contentDescription = null, tint = WaraqError)
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onDeleteClick()
-                            }
-                        )
+                    // 3 Vertical Dots Menu (48dp accessible touch target)
+                    Box {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("book_menu_button_${book.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "خيارات الملف",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (book.isFavorite) "إزالة علامة التحديد" else "وضع علامة تحديد على الملف",
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        if (book.isFavorite) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onToggleMarkClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("تحديد الملف (اختيار متعدد)", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onSelectThisBookClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("فتح المستند", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = WaraqNeonGreen)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("إدارة واستخراج الصفحات", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.GridView, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onManagePagesClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("إعادة تسمية", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onRenameClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("مشاركة الملف", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onShareClick()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("إزالة من القائمة", color = WaraqError) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = WaraqError)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onDeleteClick()
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -270,6 +394,6 @@ private fun formatFileSize(bytes: Long): String {
 }
 
 private fun formatDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
-    return sdf.format(Date(if (timestamp > 0) timestamp else System.currentTimeMillis()))
+    val formatter = cachedDateFormat.get() ?: SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
+    return formatter.format(Date(if (timestamp > 0) timestamp else System.currentTimeMillis()))
 }

@@ -79,6 +79,7 @@ import com.example.ui.components.smartZoomPanGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -179,21 +180,23 @@ fun WordReaderScreen(
     // Restore saved page position once on initial load
     LaunchedEffect(uiState.isLoading, uiState.book?.id, uiState.wordPages.size) {
         if (!uiState.isLoading && uiState.book != null && !hasRestoredInitialPage && uiState.wordPages.isNotEmpty()) {
-            hasRestoredInitialPage = true
             val initialPageIndex = (uiState.wordCurrentPage - 1).coerceIn(0, uiState.wordPages.size - 1)
             if (initialPageIndex > 0) {
                 listState.scrollToItem(initialPageIndex)
             }
+            hasRestoredInitialPage = true
         }
     }
 
-    // Monitor continuous page scroll and report page number
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .distinctUntilChanged()
-            .collect { index ->
-                onScrolledTo(index + 1)
-            }
+    // Monitor continuous page scroll only after initial restoration completes
+    LaunchedEffect(listState, hasRestoredInitialPage, uiState.isLoading) {
+        if (!uiState.isLoading && hasRestoredInitialPage) {
+            snapshotFlow { listState.firstVisibleItemIndex }
+                .distinctUntilChanged()
+                .collect { index ->
+                    onScrolledTo(index + 1)
+                }
+        }
     }
 
     Box(
@@ -274,6 +277,13 @@ fun WordReaderScreen(
                         )
                     }
             ) {
+                val pageWidthFraction by remember { derivedStateOf { scale.coerceIn(0.55f, 1.0f) } }
+                val itemSpacingDp by remember {
+                    derivedStateOf {
+                        if (scale < 1f) (16f * scale).coerceAtLeast(8f).dp else 16.dp
+                    }
+                }
+
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(
@@ -282,9 +292,7 @@ fun WordReaderScreen(
                         start = 12.dp,
                         end = 12.dp
                     ),
-                    verticalArrangement = Arrangement.spacedBy(
-                        if (scale < 1f) (16f * scale).coerceAtLeast(8f).dp else 16.dp
-                    ),
+                    verticalArrangement = Arrangement.spacedBy(itemSpacingDp),
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
@@ -300,12 +308,11 @@ fun WordReaderScreen(
                         items = uiState.wordPages,
                         key = { _, page -> page.pageNumber }
                     ) { _, page ->
-                        val widthFraction = scale.coerceIn(0.55f, 1.0f)
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Box(modifier = Modifier.fillMaxWidth(widthFraction)) {
+                            Box(modifier = Modifier.fillMaxWidth(pageWidthFraction)) {
                                 WordPageCard(
                                     page = page,
                                     totalPages = uiState.wordTotalPages,
@@ -911,30 +918,32 @@ fun WordPageParagraphItem(
     textColor: Color,
     highlightQuery: String
 ) {
-    val annotated = buildAnnotatedString {
-        if (element.runs.isNotEmpty()) {
-            for (run in element.runs) {
-                val spanColor = if (highlightQuery.isNotBlank() && run.text.contains(highlightQuery, ignoreCase = true)) {
-                    Color(0xFFE65100)
-                } else {
-                    textColor
-                }
+    val annotated = remember(element, baseFontSize, textColor, highlightQuery) {
+        buildAnnotatedString {
+            if (element.runs.isNotEmpty()) {
+                for (run in element.runs) {
+                    val spanColor = if (highlightQuery.isNotBlank() && run.text.contains(highlightQuery, ignoreCase = true)) {
+                        Color(0xFFE65100)
+                    } else {
+                        textColor
+                    }
 
-                withStyle(
-                    SpanStyle(
-                        fontSize = baseFontSize.sp,
-                        color = spanColor,
-                        fontWeight = if (run.isBold) FontWeight.Bold else FontWeight.Normal,
-                        fontStyle = if (run.isItalic) FontStyle.Italic else FontStyle.Normal,
-                        textDecoration = if (run.isUnderline) TextDecoration.Underline else TextDecoration.None
-                    )
-                ) {
-                    append(run.text)
+                    withStyle(
+                        SpanStyle(
+                            fontSize = baseFontSize.sp,
+                            color = spanColor,
+                            fontWeight = if (run.isBold) FontWeight.Bold else FontWeight.Normal,
+                            fontStyle = if (run.isItalic) FontStyle.Italic else FontStyle.Normal,
+                            textDecoration = if (run.isUnderline) TextDecoration.Underline else TextDecoration.None
+                        )
+                    ) {
+                        append(run.text)
+                    }
                 }
-            }
-        } else {
-            withStyle(SpanStyle(fontSize = baseFontSize.sp, color = textColor)) {
-                append(element.text)
+            } else {
+                withStyle(SpanStyle(fontSize = baseFontSize.sp, color = textColor)) {
+                    append(element.text)
+                }
             }
         }
     }

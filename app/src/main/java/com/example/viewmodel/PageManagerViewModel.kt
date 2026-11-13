@@ -84,7 +84,6 @@ class PageManagerViewModel(application: Application) : AndroidViewModel(applicat
                     val engine = PdfEngine(file)
                     pdfEngine = engine
                     val count = engine.pageCount.coerceAtLeast(1)
-                    engine.preloadAspectRatios(0, count.coerceAtMost(40))
 
                     val items = (1..count).map { pageNum ->
                         ManagedPageItem(id = "p_$pageNum", originalPageNumber = pageNum)

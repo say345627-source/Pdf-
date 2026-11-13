@@ -739,11 +739,13 @@ private fun ManagedPageGridCard(
     onMoveEarlier: () -> Unit,
     onMoveLater: () -> Unit
 ) {
-    var thumbnail by remember(item.originalPageNumber, pdfEngine) { mutableStateOf<Bitmap?>(null) }
+    var thumbnail by remember(item.originalPageNumber, pdfEngine) {
+        mutableStateOf(pdfEngine?.getCachedThumbnail(item.originalPageNumber - 1))
+    }
 
     LaunchedEffect(item.originalPageNumber, pdfEngine) {
-        if (isPdf && pdfEngine != null) {
-            thumbnail = pdfEngine.renderThumbnail(item.originalPageNumber - 1, 320)
+        if (isPdf && pdfEngine != null && (thumbnail == null || thumbnail?.isRecycled == true)) {
+            thumbnail = pdfEngine.renderThumbnail(item.originalPageNumber - 1, 280)
         }
     }
 

@@ -1,9 +1,14 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,8 +22,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,22 +33,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.RemoveDone
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.Widgets
@@ -51,7 +58,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +72,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -121,6 +128,13 @@ fun LibraryScreen(
     onSearchChanged: (String) -> Unit,
     onSettingsClick: () -> Unit,
     onManagePagesClick: (Long) -> Unit = {},
+    onEnterSelectionMode: (Long?) -> Unit = {},
+    onToggleBookSelection: (Long) -> Unit = {},
+    onSelectAllSelection: () -> Unit = {},
+    onClearSelection: () -> Unit = {},
+    onToggleBookMark: (BookEntity) -> Unit = {},
+    onMarkSelected: (Boolean) -> Unit = {},
+    onDeleteSelected: () -> Unit = {},
     onDismissNotification: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -132,6 +146,11 @@ fun LibraryScreen(
     var bookToRename by remember { mutableStateOf<BookEntity?>(null) }
     var renameInputText by remember { mutableStateOf("") }
     var bookToDelete by remember { mutableStateOf<BookEntity?>(null) }
+    var showBatchDeleteDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = uiState.isSelectionMode) {
+        onClearSelection()
+    }
 
     // File picker launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -155,197 +174,294 @@ fun LibraryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.background)
+                    .statusBarsPadding()
             ) {
-                // Top Search & Status Bar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "وَرَق",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Offline Guarantee Badge
+                if (uiState.isSelectionMode) {
+                    // Contextual Selection Top Bar
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, MaterialTheme.colorScheme.outline)
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        tonalElevation = 4.dp,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = onClearSelection,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("selection_close_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "إلغاء التحديد",
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(6.dp))
+
+                            Text(
+                                text = "تم تحديد ${uiState.selectedBookIds.size}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            TextButton(
+                                onClick = onSelectAllSelection,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("selection_select_all_button")
+                            ) {
+                                Text(
+                                    text = "تحديد الكل",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Normal Top Search & Status Bar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "وَرَق",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Offline Guarantee Badge
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, MaterialTheme.colorScheme.outline)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.WifiOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "محلي 100% بلا نت",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        if (uiState.currentBottomNavTab == BottomNavTab.ALL_FILES ||
+                            uiState.currentBottomNavTab == BottomNavTab.RECENTS
+                        ) {
+                            IconButton(
+                                onClick = { onEnterSelectionMode(null) },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("library_selection_mode_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Checklist,
+                                    contentDescription = "تحديد الملفات",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { isSearchActive = !isSearchActive },
+                            modifier = Modifier.minimumInteractiveComponentSize()
                         ) {
                             Icon(
-                                imageVector = Icons.Default.WifiOff,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(12.dp)
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "بحث",
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "محلي 100% بلا نت",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
+                        }
+
+                        IconButton(
+                            onClick = onSettingsClick,
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = "الثيمات والمظهر",
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    IconButton(onClick = { isSearchActive = !isSearchActive }) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "بحث",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = "الثيمات والمظهر",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                }
-
-                // Inline Search Bar
-                AnimatedVisibility(visible = isSearchActive) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = uiState.searchQuery,
-                            onValueChange = onSearchChanged,
-                            placeholder = { Text("ابحث في أسماء الملفات والمستندات...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            trailingIcon = {
-                                if (uiState.searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { onSearchChanged("") }) {
-                                        Icon(Icons.Default.Close, contentDescription = "مسح", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Inline Search Bar
+                    AnimatedVisibility(visible = isSearchActive) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = uiState.searchQuery,
+                                onValueChange = onSearchChanged,
+                                placeholder = { Text("ابحث في أسماء الملفات والمستندات...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                trailingIcon = {
+                                    if (uiState.searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { onSearchChanged("") }) {
+                                            Icon(Icons.Default.Close, contentDescription = "مسح", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
-                                }
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
 
-                // Top Category Tabs Bar (Screenshot Replica: الكل | PDF | Word | Excel | PPT | المفضلة)
+                // Top Category Tabs Bar (الكل | PDF | Word | المحددة)
                 if (uiState.currentBottomNavTab == BottomNavTab.ALL_FILES) {
                     TopCategoryTabsRow(
                         selectedCategory = uiState.selectedCategoryTab,
+                        markedCount = uiState.markedBooksCount,
                         onSelectCategory = onCategorySelected
                     )
                 }
             }
         },
         bottomBar = {
-            // Bottom Navigation Bar (Screenshot Replica: كل الملفات | الأخيرة | العلامات المرجعية | الأدوات)
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp,
-                modifier = Modifier.shadow(8.dp)
-            ) {
-                NavigationBarItem(
-                    selected = uiState.currentBottomNavTab == BottomNavTab.ALL_FILES,
-                    onClick = { onBottomNavTabSelected(BottomNavTab.ALL_FILES) },
-                    icon = { Icon(Icons.Default.Description, contentDescription = null) },
-                    label = { Text("كل الملفات", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                    )
+            if (uiState.isSelectionMode) {
+                val allKnownBooks = remember(uiState.books, uiState.recentBooks) {
+                    (uiState.books + uiState.recentBooks).associateBy { it.id }
+                }
+                val selectedBooks = remember(uiState.selectedBookIds, allKnownBooks) {
+                    uiState.selectedBookIds.mapNotNull { allKnownBooks[it] }
+                }
+                SelectionBottomActionBar(
+                    selectedCount = uiState.selectedBookIds.size,
+                    onMarkClick = { onMarkSelected(true) },
+                    onUnmarkClick = { onMarkSelected(false) },
+                    onShareClick = {
+                        shareSelectedBooks(context, selectedBooks)
+                        onClearSelection()
+                    },
+                    onDeleteClick = { showBatchDeleteDialog = true }
                 )
+            } else {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.shadow(8.dp)
+                ) {
+                    NavigationBarItem(
+                        selected = uiState.currentBottomNavTab == BottomNavTab.ALL_FILES,
+                        onClick = { onBottomNavTabSelected(BottomNavTab.ALL_FILES) },
+                        icon = { Icon(Icons.Default.Description, contentDescription = null) },
+                        label = { Text("كل الملفات", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        )
+                    )
 
-                NavigationBarItem(
-                    selected = uiState.currentBottomNavTab == BottomNavTab.RECENTS,
-                    onClick = { onBottomNavTabSelected(BottomNavTab.RECENTS) },
-                    icon = { Icon(Icons.Default.History, contentDescription = null) },
-                    label = { Text("الأخيرة", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    NavigationBarItem(
+                        selected = uiState.currentBottomNavTab == BottomNavTab.RECENTS,
+                        onClick = { onBottomNavTabSelected(BottomNavTab.RECENTS) },
+                        icon = { Icon(Icons.Default.History, contentDescription = null) },
+                        label = { Text("الأخيرة", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        )
                     )
-                )
 
-                NavigationBarItem(
-                    selected = uiState.currentBottomNavTab == BottomNavTab.BOOKMARKS,
-                    onClick = { onBottomNavTabSelected(BottomNavTab.BOOKMARKS) },
-                    icon = { Icon(Icons.Default.BookmarkBorder, contentDescription = null) },
-                    label = { Text("العلامات", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    NavigationBarItem(
+                        selected = uiState.currentBottomNavTab == BottomNavTab.BOOKMARKS,
+                        onClick = { onBottomNavTabSelected(BottomNavTab.BOOKMARKS) },
+                        icon = { Icon(Icons.Default.BookmarkBorder, contentDescription = null) },
+                        label = { Text("العلامات", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        )
                     )
-                )
 
-                NavigationBarItem(
-                    selected = uiState.currentBottomNavTab == BottomNavTab.TOOLS,
-                    onClick = { onBottomNavTabSelected(BottomNavTab.TOOLS) },
-                    icon = { Icon(Icons.Default.Widgets, contentDescription = null) },
-                    label = { Text("الثيمات والأدوات", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    NavigationBarItem(
+                        selected = uiState.currentBottomNavTab == BottomNavTab.TOOLS,
+                        onClick = { onBottomNavTabSelected(BottomNavTab.TOOLS) },
+                        icon = { Icon(Icons.Default.Widgets, contentDescription = null) },
+                        label = { Text("الثيمات والأدوات", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        )
                     )
-                )
+                }
             }
         },
         floatingActionButton = {
-            // Red circular floating + button (Screenshot replica)
-            FloatingActionButton(
-                onClick = {
-                    filePickerLauncher.launch(
-                        arrayOf(
-                            "application/pdf",
-                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            "application/msword"
+            if (!uiState.isSelectionMode) {
+                FloatingActionButton(
+                    onClick = {
+                        filePickerLauncher.launch(
+                            arrayOf(
+                                "application/pdf",
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                "application/msword"
+                            )
                         )
-                    )
-                },
-                containerColor = WaraqPdfColor,
-                contentColor = Color.White,
-                shape = CircleShape,
-                modifier = Modifier
-                    .size(56.dp)
-                    .testTag("fab_import_document")
-            ) {
-                if (uiState.isImporting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = Color.White,
-                        strokeWidth = 2.5.dp
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "استيراد مستند",
-                        modifier = Modifier.size(28.dp)
-                    )
+                    },
+                    containerColor = WaraqPdfColor,
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .testTag("fab_import_document")
+                ) {
+                    if (uiState.isImporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = Color.White,
+                            strokeWidth = 2.5.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "استيراد مستند",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
                 }
             }
         },
@@ -355,12 +471,20 @@ fun LibraryScreen(
     ) { innerPadding ->
 
         when (uiState.currentBottomNavTab) {
-            // Tab 1: ALL FILES (matching screenshot with "المضاف مؤخراً" banner & file list)
             BottomNavTab.ALL_FILES -> {
                 AllFilesContent(
                     uiState = uiState,
                     innerPadding = innerPadding,
-                    onBookClick = onBookClick,
+                    onBookClick = { bookId ->
+                        if (uiState.isSelectionMode) {
+                            onToggleBookSelection(bookId)
+                        } else {
+                            onBookClick(bookId)
+                        }
+                    },
+                    onLongClick = { bookId -> onEnterSelectionMode(bookId) },
+                    onToggleMarkClick = onToggleBookMark,
+                    onSelectBookClick = { bookId -> onEnterSelectionMode(bookId) },
                     onManagePagesClick = onManagePagesClick,
                     onRenameClick = { book ->
                         bookToRename = book
@@ -384,12 +508,22 @@ fun LibraryScreen(
                 )
             }
 
-            // Tab 2: RECENTS (قسم الأخيرة - specifically requested by user)
             BottomNavTab.RECENTS -> {
                 RecentsContent(
                     recentBooks = uiState.recentBooks,
+                    isSelectionMode = uiState.isSelectionMode,
+                    selectedBookIds = uiState.selectedBookIds,
                     innerPadding = innerPadding,
-                    onBookClick = onBookClick,
+                    onBookClick = { bookId ->
+                        if (uiState.isSelectionMode) {
+                            onToggleBookSelection(bookId)
+                        } else {
+                            onBookClick(bookId)
+                        }
+                    },
+                    onLongClick = { bookId -> onEnterSelectionMode(bookId) },
+                    onToggleMarkClick = onToggleBookMark,
+                    onSelectBookClick = { bookId -> onEnterSelectionMode(bookId) },
                     onManagePagesClick = onManagePagesClick,
                     onRenameClick = { book ->
                         bookToRename = book
@@ -404,7 +538,6 @@ fun LibraryScreen(
                 )
             }
 
-            // Tab 3: BOOKMARKS
             BottomNavTab.BOOKMARKS -> {
                 BookmarksContent(
                     bookmarks = uiState.bookmarks,
@@ -416,7 +549,6 @@ fun LibraryScreen(
                 )
             }
 
-            // Tab 4: THEMES & TOOLS
             BottomNavTab.TOOLS -> {
                 ThemesAndToolsContent(
                     currentThemeId = uiState.currentThemeId,
@@ -498,18 +630,155 @@ fun LibraryScreen(
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
+
+    // Batch Delete Confirmation Dialog
+    if (showBatchDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteDialog = false },
+            title = { Text("حذف الملفات المحددة", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = "هل ترغب بإزالة ${uiState.selectedBookIds.size} ملفات من المكتبة؟\n(ملاحظة: لن تُحذف الملفات الأصلية من هاتفك)",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 22.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showBatchDeleteDialog = false
+                        onDeleteSelected()
+                    }
+                ) {
+                    Text("حذف", color = WaraqError, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteDialog = false }) {
+                    Text("إلغاء", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+}
+
+@Composable
+fun SelectionBottomActionBar(
+    selectedCount: Int,
+    onMarkClick: () -> Unit,
+    onUnmarkClick: () -> Unit,
+    onShareClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hasSelection = selectedCount > 0
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp,
+        shadowElevation = 8.dp,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SelectionActionItem(
+                icon = Icons.Default.CheckCircle,
+                label = "وضع علامة",
+                enabled = hasSelection,
+                tint = MaterialTheme.colorScheme.primary,
+                onClick = onMarkClick,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("selection_mark_button")
+            )
+            SelectionActionItem(
+                icon = Icons.Default.RemoveDone,
+                label = "إزالة العلامة",
+                enabled = hasSelection,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = onUnmarkClick,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("selection_unmark_button")
+            )
+            SelectionActionItem(
+                icon = Icons.Default.Share,
+                label = "مشاركة",
+                enabled = hasSelection,
+                tint = MaterialTheme.colorScheme.onSurface,
+                onClick = onShareClick,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("selection_share_button")
+            )
+            SelectionActionItem(
+                icon = Icons.Default.Delete,
+                label = "حذف",
+                enabled = hasSelection,
+                tint = WaraqError,
+                onClick = onDeleteClick,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("selection_delete_button")
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionActionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val effectiveTint = if (enabled) tint else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .minimumInteractiveComponentSize()
+            .padding(vertical = 8.dp, horizontal = 4.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = effectiveTint,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            color = effectiveTint,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 /**
- * Top Category Tabs Row (Screenshot Replica: الكل | PDF | Word | المفضلة)
+ * Top Category Tabs Row (الكل | PDF | Word | المحددة)
  */
 @Composable
 fun TopCategoryTabsRow(
     selectedCategory: String,
+    markedCount: Int = 0,
     onSelectCategory: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val categories = listOf("الكل", "PDF", "Word", "المفضلة")
+    val categories = listOf("الكل", "PDF", "Word", "المحددة")
     val scrollState = rememberScrollState()
 
     Row(
@@ -521,15 +790,21 @@ fun TopCategoryTabsRow(
     ) {
         categories.forEach { category ->
             val isSelected = category == selectedCategory
+            val displayLabel = if (category == "المحددة" && markedCount > 0) {
+                "المحددة ($markedCount)"
+            } else {
+                category
+            }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable { onSelectCategory(category) }
+                    .minimumInteractiveComponentSize()
                     .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = category,
+                    text = displayLabel,
                     color = if (isSelected) WaraqPdfColor else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 15.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
@@ -549,13 +824,16 @@ fun TopCategoryTabsRow(
 }
 
 /**
- * All Files Tab Content (Screenshot replica with folder banner & document items)
+ * All Files Tab Content
  */
 @Composable
 fun AllFilesContent(
     uiState: LibraryUiState,
     innerPadding: PaddingValues,
     onBookClick: (Long) -> Unit,
+    onLongClick: (Long) -> Unit,
+    onToggleMarkClick: (BookEntity) -> Unit,
+    onSelectBookClick: (Long) -> Unit,
     onManagePagesClick: (Long) -> Unit,
     onRenameClick: (BookEntity) -> Unit,
     onShareClick: (BookEntity) -> Unit,
@@ -569,7 +847,6 @@ fun AllFilesContent(
         ),
         modifier = Modifier.fillMaxSize()
     ) {
-        // "المضاف مؤخراً" Banner (Screenshot replica)
         item {
             RecentlyAddedBanner(
                 count = uiState.allBooksCount,
@@ -592,8 +869,12 @@ fun AllFilesContent(
             items(uiState.books, key = { it.id }) { book ->
                 BookCard(
                     book = book,
-                    isGrid = false,
+                    isSelectionMode = uiState.isSelectionMode,
+                    isSelected = book.id in uiState.selectedBookIds,
                     onClick = { onBookClick(book.id) },
+                    onLongClick = { onLongClick(book.id) },
+                    onToggleMarkClick = { onToggleMarkClick(book) },
+                    onSelectThisBookClick = { onSelectBookClick(book.id) },
                     onManagePagesClick = { onManagePagesClick(book.id) },
                     onRenameClick = { onRenameClick(book) },
                     onShareClick = { onShareClick(book) },
@@ -679,8 +960,13 @@ fun RecentlyAddedBanner(
 @Composable
 fun RecentsContent(
     recentBooks: List<BookEntity>,
+    isSelectionMode: Boolean,
+    selectedBookIds: Set<Long>,
     innerPadding: PaddingValues,
     onBookClick: (Long) -> Unit,
+    onLongClick: (Long) -> Unit,
+    onToggleMarkClick: (BookEntity) -> Unit,
+    onSelectBookClick: (Long) -> Unit,
     onManagePagesClick: (Long) -> Unit,
     onRenameClick: (BookEntity) -> Unit,
     onShareClick: (BookEntity) -> Unit,
@@ -733,22 +1019,27 @@ fun RecentsContent(
                 }
             }
         } else {
-            // First book as hero continue card
-            item {
-                val topBook = recentBooks.first()
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                    HeroContinueReadingCard(
-                        book = topBook,
-                        onContinueClick = { onBookClick(topBook.id) }
-                    )
+            if (!isSelectionMode) {
+                item {
+                    val topBook = recentBooks.first()
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        HeroContinueReadingCard(
+                            book = topBook,
+                            onContinueClick = { onBookClick(topBook.id) }
+                        )
+                    }
                 }
             }
 
             items(recentBooks, key = { it.id }) { book ->
                 BookCard(
                     book = book,
-                    isGrid = false,
+                    isSelectionMode = isSelectionMode,
+                    isSelected = book.id in selectedBookIds,
                     onClick = { onBookClick(book.id) },
+                    onLongClick = { onLongClick(book.id) },
+                    onToggleMarkClick = { onToggleMarkClick(book) },
+                    onSelectThisBookClick = { onSelectBookClick(book.id) },
                     onManagePagesClick = { onManagePagesClick(book.id) },
                     onRenameClick = { onRenameClick(book) },
                     onShareClick = { onShareClick(book) },
@@ -1045,6 +1336,38 @@ private fun shareBookFile(context: android.content.Context, book: BookEntity) {
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(android.content.Intent.createChooser(intent, "مشاركة الملف"))
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+private fun shareSelectedBooks(context: android.content.Context, books: List<BookEntity>) {
+    if (books.isEmpty()) return
+    if (books.size == 1) {
+        shareBookFile(context, books.first())
+        return
+    }
+    try {
+        val uris = ArrayList<android.net.Uri>()
+        books.forEach { book ->
+            val file = java.io.File(book.localFilePath)
+            if (file.exists()) {
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+                uris.add(uri)
+            }
+        }
+        if (uris.isEmpty()) return
+
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "مشاركة الملفات (${uris.size})"))
     } catch (e: Exception) {
         e.printStackTrace()
     }

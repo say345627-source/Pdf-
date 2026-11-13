@@ -52,9 +52,18 @@ interface BookDao {
     @Query("UPDATE books SET title = :newTitle WHERE id = :id")
     suspend fun renameBook(id: Long, newTitle: String)
 
+    @Query("UPDATE books SET isFavorite = :isFavorite WHERE id = :id")
+    suspend fun updateFavorite(id: Long, isFavorite: Boolean)
+
+    @Query("UPDATE books SET isFavorite = :isFavorite WHERE id IN (:ids)")
+    suspend fun updateFavorites(ids: List<Long>, isFavorite: Boolean)
+
     @Delete
     suspend fun deleteBook(book: BookEntity)
 
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteBookById(id: Long)
+
+    @Query("DELETE FROM books WHERE id IN (:ids)")
+    suspend fun deleteBooksByIds(ids: List<Long>)
 }

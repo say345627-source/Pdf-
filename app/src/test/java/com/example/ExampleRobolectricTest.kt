@@ -122,4 +122,43 @@ class ExampleRobolectricTest {
         assertEquals(2, results[1].matchCount)
         assertEquals("اسمهان", results[0].matchedTerm)
     }
+
+    @Test
+    fun `book marking and batch operations persist and delete accurately`() = runTest {
+        val bookDao = db.bookDao()
+        val id1 = bookDao.insertBook(
+            BookEntity(
+                title = "ملف أول",
+                originalFileName = "first.pdf",
+                localFilePath = "/data/first.pdf",
+                fileType = "PDF",
+                totalPages = 10
+            )
+        )
+        val id2 = bookDao.insertBook(
+            BookEntity(
+                title = "ملف ثان",
+                originalFileName = "second.pdf",
+                localFilePath = "/data/second.pdf",
+                fileType = "PDF",
+                totalPages = 15
+            )
+        )
+
+        bookDao.updateFavorite(id1, true)
+        assertEquals(true, bookDao.getBookById(id1)?.isFavorite)
+        assertEquals(false, bookDao.getBookById(id2)?.isFavorite)
+
+        bookDao.updateFavorites(listOf(id1, id2), true)
+        assertEquals(true, bookDao.getBookById(id1)?.isFavorite)
+        assertEquals(true, bookDao.getBookById(id2)?.isFavorite)
+
+        bookDao.updateFavorites(listOf(id1, id2), false)
+        assertEquals(false, bookDao.getBookById(id1)?.isFavorite)
+        assertEquals(false, bookDao.getBookById(id2)?.isFavorite)
+
+        bookDao.deleteBooksByIds(listOf(id1, id2))
+        assertEquals(null, bookDao.getBookById(id1))
+        assertEquals(null, bookDao.getBookById(id2))
+    }
 }
