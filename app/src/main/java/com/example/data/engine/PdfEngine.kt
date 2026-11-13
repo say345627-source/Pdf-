@@ -31,10 +31,11 @@ class PdfEngine(val file: File) {
     // Aspect ratio cache (height / width) so UI layout never blocks Main Thread
     private val aspectRatioCache = ConcurrentHashMap<Int, Float>()
 
-    // Dynamic full-page bitmap cache (up to 48MB depending on heap)
+    // Conservative bitmap budgets: the reader must coexist with Compose, the database,
+    // and the rest of the app on mid-range devices without triggering Android low-memory kills.
     private val memoryCache: LruCache<Int, Bitmap> = run {
         val maxMemBytes = Runtime.getRuntime().maxMemory().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        val cacheBytes = (maxMemBytes / 6).coerceIn(24 * 1024 * 1024, 48 * 1024 * 1024)
+        val cacheBytes = (maxMemBytes / 16).coerceIn(6 * 1024 * 1024, 20 * 1024 * 1024)
         object : LruCache<Int, Bitmap>(cacheBytes) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
                 return value.byteCount
@@ -42,8 +43,8 @@ class PdfEngine(val file: File) {
         }
     }
 
-    // Separate small cache for Page Manager thumbnails so grid scrolling doesn't evict reader pages
-    private val thumbnailCache: LruCache<Int, Bitmap> = object : LruCache<Int, Bitmap>(12 * 1024 * 1024) {
+    // Keep page-manager thumbnails on a separate, much smaller memory budget.
+    private val thumbnailCache: LruCache<Int, Bitmap> = object : LruCache<Int, Bitmap>(3 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: Bitmap): Int {
             return value.byteCount
         }
@@ -142,20 +143,26 @@ class PdfEngine(val file: File) {
                     val ratio = (originalHeight.toFloat() / originalWidth.toFloat()).coerceIn(0.45f, 3.0f)
                     aspectRatioCache[pageIndex] = ratio
 
-                    val safeTargetWidth = targetWidth.coerceIn(480, 1280)
-                    var scale = (safeTargetWidth.toFloat() / originalWidth.toFloat()).coerceIn(0.8f, 2.2f)
+                    // Render at a bounded resolution. RGB_565 uses half the memory of
+                    // ARGB_8888 and is suitable for opaque white document pages.
+                    val safeTargetWidth = targetWidth.coerceIn(480, 1000)
+                    val scale = (safeTargetWidth.toFloat() / originalWidth.toFloat()).coerceIn(0.5f, 1.6f)
                     var bitmapWidth = (originalWidth * scale).toInt().coerceAtLeast(1)
                     var bitmapHeight = (originalHeight * scale).toInt().coerceAtLeast(1)
 
-                    // Prevent oversized bitmaps from causing OOM or slow rasterization stalls
-                    val maxDim = 2100
-                    if (bitmapWidth > maxDim || bitmapHeight > maxDim) {
-                        val clampRatio = maxDim.toFloat() / maxOf(bitmapWidth, bitmapHeight).toFloat()
-                        bitmapWidth = (bitmapWidth * clampRatio).toInt().coerceAtLeast(1)
-                        bitmapHeight = (bitmapHeight * clampRatio).toInt().coerceAtLeast(1)
+                    // Bound both dimensions and total pixel count for unusually large scans.
+                    val maxDim = 1600
+                    val maxPixels = 2_800_000L
+                    val dimensionScale = maxDim.toFloat() / maxOf(bitmapWidth, bitmapHeight).toFloat()
+                    val pixelScale = kotlin.math.sqrt(maxPixels.toDouble() /
+                        (bitmapWidth.toLong() * bitmapHeight.toLong()).coerceAtLeast(1L)).toFloat()
+                    val clampScale = minOf(1f, dimensionScale, pixelScale)
+                    if (clampScale < 1f) {
+                        bitmapWidth = (bitmapWidth * clampScale).toInt().coerceAtLeast(1)
+                        bitmapHeight = (bitmapHeight * clampScale).toInt().coerceAtLeast(1)
                     }
 
-                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
                     bitmap.eraseColor(Color.WHITE)
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
@@ -210,7 +217,7 @@ class PdfEngine(val file: File) {
                     val bitmapWidth = (originalWidth * scale).toInt().coerceIn(80, 480)
                     val bitmapHeight = (bitmapWidth * ratio).toInt().coerceIn(80, 720)
 
-                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
                     bitmap.eraseColor(Color.WHITE)
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
