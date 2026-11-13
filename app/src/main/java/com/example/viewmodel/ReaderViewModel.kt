@@ -161,7 +161,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
 
-            loadPageTextInternal(savedPage)
+            // Do not parse the entire PDF text layer while opening the reader.
+            // Text extraction is deferred until the user explicitly opens text selection.
         } catch (e: Exception) {
             e.printStackTrace()
             _uiState.update {
@@ -217,7 +218,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
 
-        loadPageTextInternal(validPage)
+        // Text extraction is intentionally not performed during scrolling.
+        // Parsing the full PDF stream here can monopolize CPU and memory on large files.
 
         // Keep only the newest nearby-page preload. Rapid scrolling must not
         // leave many obsolete PDF dimension scans queued behind rendering.
@@ -300,7 +302,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 currentVisiblePage = target
             )
         }
-        loadPageTextInternal(target)
+        // Text is loaded on demand when the user opens the text-selection panel.
     }
 
     fun nextPdfPage() {
@@ -312,7 +314,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleTextSelectionMode() {
-        _uiState.update { it.copy(isTextSelectionMode = !it.isTextSelectionMode) }
+        val willOpen = !_uiState.value.isTextSelectionMode
+        _uiState.update { it.copy(isTextSelectionMode = willOpen) }
+        if (willOpen) {
+            // Preserve copy/share/select text functionality, but only pay the
+            // full-document parsing cost when the user actually requests text.
+            loadPageTextInternal(_uiState.value.pdfCurrentPage)
+        }
     }
 
     fun togglePdfSearch() {
