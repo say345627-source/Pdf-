@@ -16,6 +16,7 @@ import com.example.widget.WaraqWidgetProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.coroutines.coroutineContext
 
 data class ReaderUiState(
     val book: BookEntity? = null,
@@ -71,6 +73,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var pdfEngine: PdfEngine? = null
     private var saveJob: Job? = null
     private var searchJob: Job? = null
+    private var wordSearchJob: Job? = null
+    private var paginationJob: Job? = null
+    private var bookmarkCheckJob: Job? = null
     private var currentBookId: Long = -1
 
     fun getPdfEngine(): PdfEngine? = pdfEngine
@@ -216,15 +221,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val engine = pdfEngine
         if (engine != null) {
             viewModelScope.launch {
-                engine.preloadAspectRatios(validPage, 10)
-                if (validPage < total) {
-                    engine.renderPage(validPage, 1080)
-                }
+                // The visible page is rendered by PdfPageCardItem. Only warm the
+                // dimensions of upcoming pages here to avoid duplicate bitmap work.
+                engine.preloadAspectRatios(validPage, 6)
             }
         }
 
         val book = _uiState.value.book ?: return
-        checkBookmarkState(book.id, validPage)
+        scheduleBookmarkCheck(book.id, validPage)
         scheduleSaveProgress(
             bookId = book.id,
             page = validPage,
@@ -246,7 +250,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val book = _uiState.value.book ?: return
-        checkBookmarkState(book.id, validPage)
+        scheduleBookmarkCheck(book.id, validPage)
 
         val pageItem = _uiState.value.wordPages.getOrNull(validPage - 1)
         val snippet = pageItem?.elements?.firstOrNull()?.let { elem ->
@@ -368,44 +372,62 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onWordSearchQueryChanged(query: String) {
         _uiState.update { it.copy(wordSearchQuery = query, activeSearchIndex = 0) }
+        wordSearchJob?.cancel()
+
         val q = query.trim()
         if (q.isBlank()) {
             _uiState.update { it.copy(wordSearchResults = emptyList()) }
             return
         }
-        val results = mutableListOf<PdfEngine.SearchResult>()
-        _uiState.value.wordPages.forEach { page ->
-            val pageText = page.elements.joinToString(" ") { elem ->
-                when (elem) {
-                    is DocElement.Heading -> elem.text
-                    is DocElement.Paragraph -> elem.text
-                    is DocElement.ListItem -> elem.text
-                    is DocElement.Table -> elem.rows.flatten().joinToString(" ")
-                    is DocElement.Notice -> elem.message
-                    is DocElement.ImageItem -> elem.caption
+
+        // Snapshot the pages before leaving the UI thread; perform all text scanning
+        // on a worker dispatcher so large Word files cannot freeze navigation.
+        val pages = _uiState.value.wordPages
+        wordSearchJob = viewModelScope.launch {
+            delay(180)
+            val results = withContext(Dispatchers.Default) {
+                val matches = mutableListOf<PdfEngine.SearchResult>()
+                pages.forEach { page ->
+                    coroutineContext.ensureActive()
+                    val pageText = page.elements.joinToString(" ") { elem ->
+                        when (elem) {
+                            is DocElement.Heading -> elem.text
+                            is DocElement.Paragraph -> elem.text
+                            is DocElement.ListItem -> elem.text
+                            is DocElement.Table -> elem.rows.flatten().joinToString(" ")
+                            is DocElement.Notice -> elem.message
+                            is DocElement.ImageItem -> elem.caption
+                        }
+                    }
+                    var count = 0
+                    var idx = pageText.indexOf(q, ignoreCase = true)
+                    val firstIdx = idx
+                    while (idx != -1) {
+                        count++
+                        idx = pageText.indexOf(q, idx + q.length, ignoreCase = true)
+                    }
+                    if (count > 0 && firstIdx != -1) {
+                        val start = (firstIdx - 24).coerceAtLeast(0)
+                        val end = (firstIdx + q.length + 36).coerceAtMost(pageText.length)
+                        matches.add(
+                            PdfEngine.SearchResult(
+                                pageNumber = page.pageNumber,
+                                matchCount = count,
+                                snippet = pageText.substring(start, end).replace("\n", " ").trim(),
+                                matchedTerm = q
+                            )
+                        )
+                    }
+                }
+                matches
+            }
+
+            if (_uiState.value.wordSearchQuery.trim() == q) {
+                _uiState.update {
+                    it.copy(wordSearchResults = results, activeSearchIndex = 0)
                 }
             }
-            var count = 0
-            var idx = pageText.indexOf(q, ignoreCase = true)
-            val firstIdx = idx
-            while (idx != -1) {
-                count++
-                idx = pageText.indexOf(q, idx + q.length, ignoreCase = true)
-            }
-            if (count > 0 && firstIdx != -1) {
-                val start = (firstIdx - 24).coerceAtLeast(0)
-                val end = (firstIdx + q.length + 36).coerceAtMost(pageText.length)
-                results.add(
-                    PdfEngine.SearchResult(
-                        pageNumber = page.pageNumber,
-                        matchCount = count,
-                        snippet = pageText.substring(start, end).replace("\n", " ").trim(),
-                        matchedTerm = q
-                    )
-                )
-            }
         }
-        _uiState.update { it.copy(wordSearchResults = results, activeSearchIndex = 0) }
     }
 
     fun selectWordSearchResult(index: Int) {
@@ -441,12 +463,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun changeWordFontSize(delta: Float) {
         val newSize = (_uiState.value.wordFontSizeSp + delta).coerceIn(13f, 30f)
         _uiState.update { it.copy(wordFontSizeSp = newSize) }
-        viewModelScope.launch {
+        paginationJob?.cancel()
+        paginationJob = viewModelScope.launch {
             userPreferencesRepo.setWordFontSize(newSize)
-            // Re-paginate with new font size
             val book = _uiState.value.book ?: return@launch
             val raw = _uiState.value.wordElements
-            val rePaginated = DocxEngine.paginateElements(raw, book.title)
+            // Pagination can be expensive for long documents; never run it on Main.
+            val rePaginated = withContext(Dispatchers.Default) {
+                DocxEngine.paginateElements(raw, book.title)
+            }
+            if (_uiState.value.wordFontSizeSp != newSize) return@launch
             _uiState.update {
                 it.copy(
                     wordPages = rePaginated,
@@ -540,6 +566,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(isBookmarked = true) }
             }
             loadBookmarks(book.id)
+        }
+    }
+
+    private fun scheduleBookmarkCheck(bookId: Long, page: Int) {
+        bookmarkCheckJob?.cancel()
+        bookmarkCheckJob = viewModelScope.launch {
+            delay(180)
+            val bookmarked = bookmarkDao.isBookmarked(bookId, page)
+            val state = _uiState.value
+            val book = state.book ?: return@launch
+            val currentPage = if (book.fileType.equals("PDF", ignoreCase = true)) {
+                state.pdfCurrentPage
+            } else {
+                state.wordCurrentPage
+            }
+            if (book.id == bookId && currentPage == page && state.isBookmarked != bookmarked) {
+                _uiState.update { it.copy(isBookmarked = bookmarked) }
+            }
         }
     }
 
