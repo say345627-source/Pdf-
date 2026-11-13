@@ -835,8 +835,13 @@ fun PdfPageCardItem(
 
     LaunchedEffect(pageIndex, engine) {
         if (engine != null) {
-            pageRatio = engine.loadAspectRatio(pageIndex)
-            bitmap = engine.renderPage(pageIndex, 1080)
+            // renderPage also records the real page ratio, so avoid opening the
+            // same PDF page twice (once for dimensions and again for rendering).
+            val rendered = engine.renderPage(pageIndex, 800)
+            if (rendered != null && !rendered.isRecycled) {
+                pageRatio = engine.getCachedAspectRatio(pageIndex)
+                bitmap = rendered
+            }
         }
     }
 
