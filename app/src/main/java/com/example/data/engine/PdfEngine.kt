@@ -31,11 +31,10 @@ class PdfEngine(val file: File) {
     // Aspect ratio cache (height / width) so UI layout never blocks Main Thread
     private val aspectRatioCache = ConcurrentHashMap<Int, Float>()
 
-    // Conservative bitmap budgets: the reader must coexist with Compose, the database,
-    // and the rest of the app on mid-range devices without triggering Android low-memory kills.
+    // Balanced bitmap budgets: enough to keep visible & adjacent pages smooth without OOM
     private val memoryCache: LruCache<Int, Bitmap> = run {
         val maxMemBytes = Runtime.getRuntime().maxMemory().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        val cacheBytes = (maxMemBytes / 16).coerceIn(6 * 1024 * 1024, 20 * 1024 * 1024)
+        val cacheBytes = (maxMemBytes / 10).coerceIn(12 * 1024 * 1024, 32 * 1024 * 1024)
         object : LruCache<Int, Bitmap>(cacheBytes) {
             override fun sizeOf(key: Int, value: Bitmap): Int {
                 return value.byteCount
@@ -43,8 +42,8 @@ class PdfEngine(val file: File) {
         }
     }
 
-    // Keep page-manager thumbnails on a separate, much smaller memory budget.
-    private val thumbnailCache: LruCache<Int, Bitmap> = object : LruCache<Int, Bitmap>(3 * 1024 * 1024) {
+    // Separate small cache for Page Manager thumbnails
+    private val thumbnailCache: LruCache<Int, Bitmap> = object : LruCache<Int, Bitmap>(6 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: Bitmap): Int {
             return value.byteCount
         }
@@ -67,6 +66,26 @@ class PdfEngine(val file: File) {
 
     val pageCount: Int
         get() = pageCountInternal
+
+    /**
+     * Non-blocking O(1) lookup for already-rendered page bitmap.
+     */
+    fun getCachedPage(pageIndex: Int): Bitmap? {
+        synchronized(memoryCache) {
+            val cached = memoryCache.get(pageIndex)
+            return if (cached != null && !cached.isRecycled) cached else null
+        }
+    }
+
+    /**
+     * Non-blocking O(1) lookup for already-rendered grid thumbnail bitmap.
+     */
+    fun getCachedThumbnail(pageIndex: Int): Bitmap? {
+        synchronized(thumbnailCache) {
+            val cached = thumbnailCache.get(pageIndex)
+            return if (cached != null && !cached.isRecycled) cached else null
+        }
+    }
 
     /**
      * Non-blocking O(1) lookup for UI thread layout pass. Never touches PdfRenderer synchronously!
@@ -123,26 +142,17 @@ class PdfEngine(val file: File) {
         }
     }
 
-    suspend fun renderPage(pageIndex: Int, targetWidth: Int = 1080): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun renderPage(pageIndex: Int, targetWidth: Int = 860): Bitmap? = withContext(Dispatchers.IO) {
         if (isClosed || pageIndex !in 0 until pageCount) return@withContext null
+        coroutineContext.ensureActive()
 
-        synchronized(memoryCache) {
-            val cached = memoryCache.get(pageIndex)
-            if (cached != null && !cached.isRecycled) {
-                return@withContext cached
-            }
-        }
+        getCachedPage(pageIndex)?.let { return@withContext it }
 
         renderMutex.withLock {
             coroutineContext.ensureActive()
             if (isClosed) return@withContext null
 
-            synchronized(memoryCache) {
-                val cached = memoryCache.get(pageIndex)
-                if (cached != null && !cached.isRecycled) {
-                    return@withContext cached
-                }
-            }
+            getCachedPage(pageIndex)?.let { return@withContext it }
 
             try {
                 val r = renderer ?: return@withContext null
@@ -153,26 +163,34 @@ class PdfEngine(val file: File) {
                     val ratio = (originalHeight.toFloat() / originalWidth.toFloat()).coerceIn(0.45f, 3.0f)
                     aspectRatioCache[pageIndex] = ratio
 
-                    // Render at a bounded resolution. RGB_565 uses half the memory of
-                    // ARGB_8888 and is suitable for opaque white document pages.
-                    val safeTargetWidth = targetWidth.coerceIn(480, 1000)
-                    val scale = (safeTargetWidth.toFloat() / originalWidth.toFloat()).coerceIn(0.5f, 1.6f)
+                    val safeTargetWidth = targetWidth.coerceIn(420, 960)
+                    val scale = (safeTargetWidth.toFloat() / originalWidth.toFloat()).coerceIn(0.15f, 1.8f)
                     var bitmapWidth = (originalWidth * scale).toInt().coerceAtLeast(1)
                     var bitmapHeight = (originalHeight * scale).toInt().coerceAtLeast(1)
 
-                    // Bound both dimensions and total pixel count for unusually large scans.
-                    val maxDim = 1600
-                    val maxPixels = 2_800_000L
+                    // Bound dimensions and pixel count so large scanned pages stay fast and OOM-safe
+                    val maxDim = 1500
+                    val maxPixels = 2_200_000L
                     val dimensionScale = maxDim.toFloat() / maxOf(bitmapWidth, bitmapHeight).toFloat()
-                    val pixelScale = kotlin.math.sqrt(maxPixels.toDouble() /
-                        (bitmapWidth.toLong() * bitmapHeight.toLong()).coerceAtLeast(1L)).toFloat()
+                    val pixelScale = kotlin.math.sqrt(
+                        maxPixels.toDouble() / (bitmapWidth.toLong() * bitmapHeight.toLong()).coerceAtLeast(1L)
+                    ).toFloat()
                     val clampScale = minOf(1f, dimensionScale, pixelScale)
                     if (clampScale < 1f) {
                         bitmapWidth = (bitmapWidth * clampScale).toInt().coerceAtLeast(1)
                         bitmapHeight = (bitmapHeight * clampScale).toInt().coerceAtLeast(1)
                     }
 
-                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
+                    // PdfRenderer.Page.render strictly requires Bitmap.Config.ARGB_8888 on Android
+                    val bitmap = try {
+                        Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                    } catch (_: OutOfMemoryError) {
+                        memoryCache.evictAll()
+                        thumbnailCache.evictAll()
+                        val fallbackW = (bitmapWidth / 2).coerceAtLeast(240)
+                        val fallbackH = (bitmapHeight / 2).coerceAtLeast(240)
+                        Bitmap.createBitmap(fallbackW, fallbackH, Bitmap.Config.ARGB_8888)
+                    }
                     bitmap.eraseColor(Color.WHITE)
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
@@ -183,8 +201,10 @@ class PdfEngine(val file: File) {
                 } finally {
                     page.close()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                t.printStackTrace()
                 null
             }
         }
@@ -193,26 +213,17 @@ class PdfEngine(val file: File) {
     /**
      * Renders a lightweight thumbnail for the Page Manager grid.
      */
-    suspend fun renderThumbnail(pageIndex: Int, targetWidth: Int = 320): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun renderThumbnail(pageIndex: Int, targetWidth: Int = 280): Bitmap? = withContext(Dispatchers.IO) {
         if (isClosed || pageIndex !in 0 until pageCount) return@withContext null
+        coroutineContext.ensureActive()
 
-        synchronized(thumbnailCache) {
-            val cached = thumbnailCache.get(pageIndex)
-            if (cached != null && !cached.isRecycled) {
-                return@withContext cached
-            }
-        }
+        getCachedThumbnail(pageIndex)?.let { return@withContext it }
 
         renderMutex.withLock {
             coroutineContext.ensureActive()
             if (isClosed) return@withContext null
 
-            synchronized(thumbnailCache) {
-                val cached = thumbnailCache.get(pageIndex)
-                if (cached != null && !cached.isRecycled) {
-                    return@withContext cached
-                }
-            }
+            getCachedThumbnail(pageIndex)?.let { return@withContext it }
 
             try {
                 val r = renderer ?: return@withContext null
@@ -223,11 +234,17 @@ class PdfEngine(val file: File) {
                     val ratio = (originalHeight.toFloat() / originalWidth.toFloat()).coerceIn(0.45f, 3.0f)
                     aspectRatioCache[pageIndex] = ratio
 
-                    val scale = (targetWidth.toFloat() / originalWidth.toFloat()).coerceIn(0.25f, 1.5f)
-                    val bitmapWidth = (originalWidth * scale).toInt().coerceIn(80, 480)
-                    val bitmapHeight = (bitmapWidth * ratio).toInt().coerceIn(80, 720)
+                    val scale = (targetWidth.toFloat() / originalWidth.toFloat()).coerceIn(0.1f, 1.4f)
+                    val bitmapWidth = (originalWidth * scale).toInt().coerceIn(80, 360)
+                    val bitmapHeight = (bitmapWidth * ratio).toInt().coerceIn(80, 520)
 
-                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
+                    // PdfRenderer.Page.render strictly requires Bitmap.Config.ARGB_8888 on Android
+                    val bitmap = try {
+                        Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                    } catch (_: OutOfMemoryError) {
+                        thumbnailCache.evictAll()
+                        Bitmap.createBitmap(120, (120 * ratio).toInt().coerceIn(80, 240), Bitmap.Config.ARGB_8888)
+                    }
                     bitmap.eraseColor(Color.WHITE)
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
@@ -238,8 +255,10 @@ class PdfEngine(val file: File) {
                 } finally {
                     page.close()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                t.printStackTrace()
                 null
             }
         }
@@ -338,19 +357,32 @@ class PdfEngine(val file: File) {
         val streamStart: Int,
         val streamEnd: Int
     ) {
+        fun isBinaryOrImageStream(): Boolean {
+            if (streamStart < 0) return true
+            val len = streamEnd - streamStart
+            if (len <= 0 || len > 512 * 1024) return true
+            return header.contains("/Image") ||
+                header.contains("/DCTDecode") ||
+                header.contains("/JPXDecode") ||
+                header.contains("/JBIG2Decode") ||
+                header.contains("/CCITTFaxDecode") ||
+                header.contains("/ObjStm")
+        }
+
         fun getDecompressedStream(): ByteArray? {
             if (streamStart < 0 || streamEnd <= streamStart || streamEnd > rawBytes.size) return null
+            if (streamEnd - streamStart > 512 * 1024) return null
             val slice = rawBytes.copyOfRange(streamStart, streamEnd)
             val isFlate = header.contains("/FlateDecode") || (slice.size >= 2 && slice[0] == 0x78.toByte())
             if (!isFlate) return slice
 
+            val inflater = java.util.zip.Inflater()
             return try {
-                val inflater = java.util.zip.Inflater()
                 inflater.setInput(slice)
                 val out = java.io.ByteArrayOutputStream()
                 val buf = ByteArray(4096)
                 var total = 0
-                while (!inflater.finished() && total < 4 * 1024 * 1024) {
+                while (!inflater.finished() && total < 1024 * 1024) {
                     val count = inflater.inflate(buf)
                     if (count == 0) {
                         if (inflater.needsInput() || inflater.needsDictionary()) break
@@ -359,10 +391,14 @@ class PdfEngine(val file: File) {
                         total += count
                     }
                 }
-                inflater.end()
                 out.toByteArray()
-            } catch (_: Exception) {
-                slice
+            } catch (_: Throwable) {
+                null
+            } finally {
+                try {
+                    inflater.end()
+                } catch (_: Throwable) {
+                }
             }
         }
     }
@@ -373,6 +409,11 @@ class PdfEngine(val file: File) {
         }
 
         try {
+            if (!file.exists() || file.length() > 40L * 1024L * 1024L) {
+                hasParsedAllText = true
+                return List(pageCount) { "" }
+            }
+
             val fileBytes = file.readBytes()
             val latin = String(fileBytes, Charsets.ISO_8859_1)
             val objects = scanPdfObjects(latin, fileBytes)
@@ -392,7 +433,9 @@ class PdfEngine(val file: File) {
                     val contentIds = extractContentIds(pageObj.header)
                     val sb = StringBuilder()
                     for (cid in contentIds) {
-                        val contentBytes = objects[cid]?.getDecompressedStream() ?: continue
+                        val contentObj = objects[cid] ?: continue
+                        if (contentObj.isBinaryOrImageStream()) continue
+                        val contentBytes = contentObj.getDecompressedStream() ?: continue
                         val streamStr = String(contentBytes, Charsets.ISO_8859_1)
                         val extracted = extractTextFromStream(streamStr, globalCMap)
                         if (extracted.isNotBlank()) {
@@ -407,6 +450,7 @@ class PdfEngine(val file: File) {
             // Fallback if /Pages tree traversal didn't yield pages
             if (pageTexts.isEmpty()) {
                 objects.values.forEach { obj ->
+                    if (obj.isBinaryOrImageStream()) return@forEach
                     val streamBytes = obj.getDecompressedStream() ?: return@forEach
                     val streamStr = String(streamBytes, Charsets.ISO_8859_1)
                     if (streamStr.contains("BT") && streamStr.contains("ET")) {
@@ -422,8 +466,9 @@ class PdfEngine(val file: File) {
                 textCache[i] = pageTexts.getOrElse(i) { "" }
             }
             hasParsedAllText = true
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            hasParsedAllText = true
         }
 
         return (0 until pageCount).map { textCache[it] ?: "" }
@@ -534,7 +579,8 @@ class PdfEngine(val file: File) {
         val bfRangeSimpleRegex = Regex("""<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>""")
 
         for (obj in objects.values) {
-            if (obj.streamStart < 0) continue
+            if (obj.streamStart < 0 || obj.isBinaryOrImageStream()) continue
+            if ((obj.streamEnd - obj.streamStart) > 96 * 1024) continue
             val bytes = obj.getDecompressedStream() ?: continue
             val content = String(bytes, Charsets.ISO_8859_1)
             if (!content.contains("beginbfchar") && !content.contains("beginbfrange")) continue

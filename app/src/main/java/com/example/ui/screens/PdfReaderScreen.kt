@@ -80,8 +80,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -138,6 +140,7 @@ fun PdfReaderScreen(
     onPreviousSearchResult: () -> Int?,
     onManagePagesClick: () -> Unit,
     onSaveImmediately: () -> Unit,
+    onSharePageText: ((String) -> Unit) -> Unit = { it("") },
     getPdfEngine: () -> PdfEngine?,
     modifier: Modifier = Modifier
 ) {
@@ -175,21 +178,23 @@ fun PdfReaderScreen(
     // Scroll to initial saved page once after document finishes loading
     LaunchedEffect(uiState.isLoading, uiState.book?.id, uiState.pdfTotalPages) {
         if (!uiState.isLoading && uiState.book != null && !hasRestoredInitialPage && uiState.pdfTotalPages > 0) {
-            hasRestoredInitialPage = true
             val initialIndex = (uiState.pdfCurrentPage - 1).coerceIn(0, uiState.pdfTotalPages - 1)
             if (initialIndex > 0) {
                 listState.scrollToItem(initialIndex)
             }
+            hasRestoredInitialPage = true
         }
     }
 
-    // Monitor continuous scroll position and report visible page
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .distinctUntilChanged()
-            .collect { visibleIndex ->
-                onPageScrolled(visibleIndex + 1)
-            }
+    // Monitor continuous scroll position only after initial page restoration completes
+    LaunchedEffect(listState, hasRestoredInitialPage, uiState.isLoading) {
+        if (!uiState.isLoading && hasRestoredInitialPage) {
+            snapshotFlow { listState.firstVisibleItemIndex }
+                .distinctUntilChanged()
+                .collect { visibleIndex ->
+                    onPageScrolled(visibleIndex + 1)
+                }
+        }
     }
 
     Box(
@@ -274,6 +279,14 @@ fun PdfReaderScreen(
                         )
                     }
             ) {
+                val engine = remember(uiState.book?.id, uiState.isLoading) { getPdfEngine() }
+                val pageWidthFraction by remember { derivedStateOf { scale.coerceIn(0.55f, 1.0f) } }
+                val itemSpacingDp by remember {
+                    derivedStateOf {
+                        if (scale < 1f) (14f * scale).coerceAtLeast(8f).dp else 14.dp
+                    }
+                }
+
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(
@@ -282,9 +295,7 @@ fun PdfReaderScreen(
                         start = 12.dp,
                         end = 12.dp
                     ),
-                    verticalArrangement = Arrangement.spacedBy(
-                        if (scale < 1f) (14f * scale).coerceAtLeast(8f).dp else 14.dp
-                    ),
+                    verticalArrangement = Arrangement.spacedBy(itemSpacingDp),
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
@@ -300,13 +311,11 @@ fun PdfReaderScreen(
                         count = uiState.pdfTotalPages,
                         key = { it }
                     ) { pageIndex ->
-                        val engine = getPdfEngine()
-                        val widthFraction = scale.coerceIn(0.55f, 1.0f)
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Box(modifier = Modifier.fillMaxWidth(widthFraction)) {
+                            Box(modifier = Modifier.fillMaxWidth(pageWidthFraction)) {
                                 PdfPageCardItem(
                                     pageIndex = pageIndex,
                                     totalPages = uiState.pdfTotalPages,
@@ -462,7 +471,9 @@ fun PdfReaderScreen(
                                             },
                                             onClick = {
                                                 showMoreMenu = false
-                                                shareDocumentText(context, uiState.book?.title ?: "", uiState.extractedPageText)
+                                                onSharePageText { text ->
+                                                    shareDocumentText(context, uiState.book?.title ?: "", text)
+                                                }
                                             }
                                         )
                                         DropdownMenuItem(
@@ -828,19 +839,30 @@ fun PdfPageCardItem(
     isNightMode: Boolean,
     modifier: Modifier = Modifier
 ) {
-    var bitmap by remember(pageIndex, engine) { mutableStateOf<Bitmap?>(null) }
+    var bitmap by remember(pageIndex, engine) {
+        mutableStateOf(engine?.getCachedPage(pageIndex))
+    }
     var pageRatio by remember(pageIndex, engine) {
         mutableFloatStateOf(engine?.getCachedAspectRatio(pageIndex) ?: 1.414f)
     }
+    var renderFailed by remember(pageIndex, engine) { mutableStateOf(false) }
+    var retryTick by remember(pageIndex, engine) { mutableIntStateOf(0) }
 
-    LaunchedEffect(pageIndex, engine) {
+    LaunchedEffect(pageIndex, engine, retryTick) {
         if (engine != null) {
-            // renderPage also records the real page ratio, so avoid opening the
-            // same PDF page twice (once for dimensions and again for rendering).
-            val rendered = engine.renderPage(pageIndex, 800)
-            if (rendered != null && !rendered.isRecycled) {
+            renderFailed = false
+            val cached = engine.getCachedPage(pageIndex)
+            if (cached != null && !cached.isRecycled) {
+                bitmap = cached
                 pageRatio = engine.getCachedAspectRatio(pageIndex)
-                bitmap = rendered
+            } else {
+                val rendered = engine.renderPage(pageIndex, 860)
+                pageRatio = engine.getCachedAspectRatio(pageIndex)
+                if (rendered != null && !rendered.isRecycled) {
+                    bitmap = rendered
+                } else {
+                    renderFailed = true
+                }
             }
         }
     }
@@ -872,6 +894,23 @@ fun PdfPageCardItem(
                     contentScale = if (fitMode == "WIDTH") ContentScale.FillWidth else ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
+            } else if (renderFailed) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "تعذر تحميل صفحة ${pageIndex + 1}",
+                        color = Color.Gray,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = { retryTick++ }) {
+                        Text("إعادة المحاولة", color = WaraqNeonGreen, fontWeight = FontWeight.Bold)
+                    }
+                }
             } else {
                 // Skeleton loading card with watermark page number
                 Column(
