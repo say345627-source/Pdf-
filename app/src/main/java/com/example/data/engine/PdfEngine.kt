@@ -51,6 +51,7 @@ class PdfEngine(val file: File) {
 
     // Text cache per page
     private val textCache = ConcurrentHashMap<Int, String>()
+    private val textParseMutex = Mutex()
 
     @Volatile
     private var hasParsedAllText = false
@@ -232,8 +233,11 @@ class PdfEngine(val file: File) {
      */
     suspend fun getPageText(pageIndex: Int): String = withContext(Dispatchers.IO) {
         textCache[pageIndex]?.let { return@withContext it }
-        val allExtracted = parsePdfStreams()
-        return@withContext allExtracted.getOrElse(pageIndex) { "" }
+        textParseMutex.withLock {
+            textCache[pageIndex]?.let { return@withLock it }
+            val allExtracted = parsePdfStreams()
+            allExtracted.getOrElse(pageIndex) { "" }
+        }
     }
 
     /**
@@ -245,7 +249,7 @@ class PdfEngine(val file: File) {
 
         val reversedQuery = cleanQuery.reversed()
         val results = mutableListOf<SearchResult>()
-        val allExtracted = parsePdfStreams()
+        val allExtracted = textParseMutex.withLock { parsePdfStreams() }
 
         allExtracted.forEachIndexed { index, rawText ->
             if (rawText.isBlank()) return@forEachIndexed
