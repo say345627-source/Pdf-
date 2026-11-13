@@ -76,6 +76,16 @@ class PdfEngine(val file: File) {
     }
 
     /**
+     * Non-blocking lookup for a page-manager thumbnail already held in memory.
+     */
+    fun getCachedThumbnail(pageIndex: Int): Bitmap? {
+        if (isClosed) return null
+        return synchronized(thumbnailCache) {
+            thumbnailCache.get(pageIndex)?.takeUnless { it.isRecycled }
+        }
+    }
+
+    /**
      * Asynchronously resolves and caches a page's aspect ratio (height / width) on Dispatchers.IO.
      */
     suspend fun loadAspectRatio(pageIndex: Int): Float = withContext(Dispatchers.IO) {
