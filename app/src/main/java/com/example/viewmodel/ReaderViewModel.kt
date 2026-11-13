@@ -77,7 +77,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var paginationJob: Job? = null
     private var bookmarkCheckJob: Job? = null
     private var pageTextJob: Job? = null
-    private var aspectPreloadJob: Job? = null
     private var currentBookId: Long = -1
 
     fun getPdfEngine(): PdfEngine? = pdfEngine
@@ -146,9 +145,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val total = engine.pageCount.coerceAtLeast(1)
             // Restore last saved page (1-indexed) safely
             val savedPage = book.lastReadPage.coerceIn(1, total)
-
-            // Preload initial aspect ratios around saved page cleanly on IO
-            engine.preloadAspectRatios((savedPage - 2).coerceAtLeast(0), 5)
 
             _uiState.update {
                 it.copy(
@@ -220,17 +216,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         // Text extraction is intentionally not performed during scrolling.
         // Parsing the full PDF stream here can monopolize CPU and memory on large files.
-
-        // Keep only the newest nearby-page preload. Rapid scrolling must not
-        // leave many obsolete PDF dimension scans queued behind rendering.
-        val engine = pdfEngine
-        if (engine != null) {
-            aspectPreloadJob?.cancel()
-            aspectPreloadJob = viewModelScope.launch {
-                delay(90)
-                engine.preloadAspectRatios(validPage, 3)
-            }
-        }
 
         val book = _uiState.value.book ?: return
         scheduleBookmarkCheck(book.id, validPage)
@@ -626,7 +611,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         savePositionImmediately()
-        aspectPreloadJob?.cancel()
         pdfEngine?.close()
         pdfEngine = null
     }
